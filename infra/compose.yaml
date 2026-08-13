@@ -1,0 +1,92 @@
+# ServiceLoop development stack.
+#
+# Images are pinned by digest so a cold clone six months from now builds the
+# same environment. Every service has a healthcheck; `pnpm dev` waits on them.
+#
+#   docker compose -f infra/compose.yaml up -d
+#
+name: serviceloop
+
+services:
+  postgres:
+    image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
+    container_name: serviceloop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: serviceloop
+      POSTGRES_PASSWORD: serviceloop
+      POSTGRES_DB: serviceloop
+      # Deterministic collation so ORDER BY matches between dev and prod.
+      POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=en-IN --encoding=UTF8'
+    ports:
+      # Host port is overridable: a developer machine often already runs a local
+      # Postgres on 5432. Set POSTGRES_PORT in .env and point DATABASE_URL at it.
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U serviceloop -d serviceloop']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  redis:
+    image: redis:7.4-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    container_name: serviceloop-redis
+    restart: unless-stopped
+    # BullMQ requires eviction to be disabled: a delayed escalation job must
+    # never be evicted under memory pressure.
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  minio:
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    container_name: serviceloop-minio
+    restart: unless-stopped
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: serviceloop
+      MINIO_ROOT_PASSWORD: serviceloop
+    ports:
+      - '${MINIO_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  # One-shot bucket bootstrap. Exits 0 once `serviceloop-media` exists.
+  minio-bootstrap:
+    image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    container_name: serviceloop-minio-bootstrap
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 serviceloop serviceloop &&
+        mc mb --ignore-existing local/serviceloop-media &&
+        mc anonymous set none local/serviceloop-media &&
+        echo "bucket serviceloop-media ready"
+    restart: 'no'
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

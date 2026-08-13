@@ -1,0 +1,7 @@
+dist
+.next
+coverage
+node_modules
+pnpm-lock.yaml
+packages/db/migrations
+*.md

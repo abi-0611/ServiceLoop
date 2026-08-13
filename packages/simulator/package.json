@@ -1,0 +1,38 @@
+{
+  "name": "@serviceloop/simulator",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json",
+    "lint": "eslint src",
+    "test:unit": "vitest run",
+    "test": "vitest run",
+    "demo:phase1": "tsx src/scenarios/phase1-demo.ts"
+  },
+  "dependencies": {
+    "@serviceloop/adapters": "workspace:*",
+    "@serviceloop/config": "workspace:*",
+    "@serviceloop/db": "workspace:*",
+    "@serviceloop/domain": "workspace:*",
+    "@serviceloop/shared": "workspace:*",
+    "bullmq": "^5.34.5",
+    "drizzle-orm": "^0.38.3",
+    "ioredis": "^5.4.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

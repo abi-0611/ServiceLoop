@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --primary: 221 83% 45%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 42%;
+    --accent: 210 40% 94%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 88%;
+    --input: 214 32% 88%;
+    --ring: 221 83% 45%;
+    --radius: 0.6rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+}
+
+/* State colours for the job-card board. Kept as a single map so a state can
+   never be coloured inconsistently between the board and the drawer. */
+@layer components {
+  .state-DRAFT {
+    @apply bg-slate-100 text-slate-700 ring-slate-300;
+  }
+  .state-OPEN {
+    @apply bg-sky-50 text-sky-800 ring-sky-300;
+  }
+  .state-IN_DIAGNOSIS {
+    @apply bg-indigo-50 text-indigo-800 ring-indigo-300;
+  }
+  .state-AWAITING_APPROVAL {
+    @apply bg-amber-50 text-amber-900 ring-amber-400;
+  }
+  .state-IN_PROGRESS {
+    @apply bg-blue-50 text-blue-800 ring-blue-300;
+  }
+  .state-AWAITING_PARTS {
+    @apply bg-orange-50 text-orange-900 ring-orange-300;
+  }
+  .state-QUALITY_CHECK {
+    @apply bg-violet-50 text-violet-800 ring-violet-300;
+  }
+  .state-READY_FOR_DELIVERY {
+    @apply bg-emerald-50 text-emerald-800 ring-emerald-300;
+  }
+  .state-AWAITING_PAYMENT {
+    @apply bg-rose-50 text-rose-800 ring-rose-300;
+  }
+  .state-DELIVERED {
+    @apply bg-teal-50 text-teal-800 ring-teal-300;
+  }
+  .state-CLOSED {
+    @apply bg-slate-100 text-slate-600 ring-slate-300;
+  }
+  .state-CANCELLED {
+    @apply bg-zinc-100 text-zinc-600 ring-zinc-300;
+  }
+}

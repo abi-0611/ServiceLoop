@@ -1,0 +1,35 @@
+{
+  "cookies": [
+    {
+      "name": "__next_hmr_refresh_hash__",
+      "value": "76834f9d80f2503983d79b9f078f8f63633457081244afec",
+      "domain": "localhost",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "sl_access",
+      "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMTkyMDAwMC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAxMDIiLCJzaG9wSWQiOiIwMTkyMDAwMC0wMDAwLTcwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJyb2xlIjoiQURWSVNPUiIsIm5hbWUiOiJQcml5YSBSYW1lc2giLCJpYXQiOjE3ODY2NTA5NzksImV4cCI6MTc4NjY1MTg3OSwiYXVkIjoic2VydmljZWxvb3AtY29uc29sZSIsImlzcyI6InNlcnZpY2Vsb29wIn0.KXMSzkn7CqPNeQA69X6g80qzBHS2lVRGRLIqkI0hNy8",
+      "domain": "localhost",
+      "path": "/",
+      "expires": 1786651879.439913,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "sl_refresh",
+      "value": "p_FDGShvUOZLOeTzz5aa_Qun8SehWS5Cq7ZnStvD9B4",
+      "domain": "localhost",
+      "path": "/",
+      "expires": 1789242979.439977,
+      "httpOnly": true,
+      "secure": false,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}

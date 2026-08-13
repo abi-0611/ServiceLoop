@@ -1,0 +1,40 @@
+{
+  "name": "serviceloop",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22.11.0 <23"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint -- --fix",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:unit": "turbo run test:unit",
+    "format": "prettier --write \"**/*.{ts,tsx,js,mjs,json,md,yaml,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,mjs,json,md,yaml,yml}\"",
+    "db:generate": "pnpm --filter @serviceloop/db run db:generate",
+    "db:migrate": "pnpm --filter @serviceloop/db run db:migrate",
+    "db:rollback": "pnpm --filter @serviceloop/db run db:rollback",
+    "db:seed": "pnpm --filter @serviceloop/db run db:seed",
+    "demo:phase1": "pnpm --filter @serviceloop/simulator run demo:phase1",
+    "infra:up": "docker compose --project-directory . -f infra/compose.yaml up -d",
+    "infra:down": "docker compose --project-directory . -f infra/compose.yaml down",
+    "infra:reset": "docker compose --project-directory . -f infra/compose.yaml down -v"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^2.1.8"
+  }
+}

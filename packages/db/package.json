@@ -1,0 +1,44 @@
+{
+  "name": "@serviceloop/db",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json",
+    "lint": "eslint src",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/cli/migrate.ts",
+    "db:rollback": "tsx src/cli/rollback.ts",
+    "db:seed": "tsx src/cli/seed.ts",
+    "test:unit": "vitest run src",
+    "test": "vitest run",
+    "test:integration": "vitest run test"
+  },
+  "dependencies": {
+    "@serviceloop/adapters": "workspace:*",
+    "@serviceloop/config": "workspace:*",
+    "@serviceloop/domain": "workspace:*",
+    "@serviceloop/shared": "workspace:*",
+    "drizzle-orm": "^0.38.3",
+    "ioredis": "^5.4.2",
+    "pg": "^8.13.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.30.1",
+    "testcontainers": "^10.16.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
