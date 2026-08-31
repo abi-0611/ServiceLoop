@@ -73,6 +73,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        # `pnpm db:migrate` and `pnpm db:seed` call the db package directly
+        # rather than through turbo, so nothing builds their @serviceloop/*
+        # dependencies for them; those resolve to `dist/`, which must exist first.
+        run: pnpm build
+
       - name: Start the dev stack
         # `up --wait` fails as soon as any container exits, even with status 0,
         # so the long-running services are waited on here and the one-shot bucket
@@ -85,9 +91,6 @@ jobs:
         run: |
           pnpm db:migrate
           pnpm db:seed
-
-      - name: Build workspace packages
-        run: pnpm build
 
       # Integration suites reuse the compose stack rather than starting their
       # own Testcontainers; the container path is exercised locally.
