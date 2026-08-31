@@ -16,6 +16,16 @@ import type {
 
 export const DEMO_SHOP_ID = '01920000-0000-7000-8000-000000000001';
 
+/**
+ * The technician evidence group for the demo shop.
+ *
+ * A WhatsApp group id, in the shape Meta actually uses. It is seeded rather
+ * than left null so a fresh clone has a working staff channel — a photographed
+ * job card is an intake trigger *there*, and without it the flagship on-ramp
+ * needs configuration before it does anything.
+ */
+export const DEMO_STAFF_GROUP_ID = '120363000000000001';
+
 export const DEMO_SHOP = {
   id: DEMO_SHOP_ID,
   name: 'Sri Murugan Auto Works',
@@ -88,7 +98,7 @@ export interface CustomerFixture {
   };
 }
 
-/** Twelve customers with the language mix a Chennai workshop actually sees. */
+/** Fifteen customers with the language mix a Chennai workshop actually sees. */
 export const DEMO_CUSTOMERS: readonly CustomerFixture[] = [
   {
     id: '01920000-0000-7000-8000-000000000201',
@@ -292,6 +302,57 @@ export const DEMO_CUSTOMERS: readonly CustomerFixture[] = [
       fuelType: 'Petrol',
       colour: 'Beige',
       odometerKm: 47600,
+    },
+  },
+  {
+    id: '01920000-0000-7000-8000-000000000213',
+    fullName: 'Arjun Prasad',
+    phone: '+919841100013',
+    preferredLanguage: 'en',
+    whatsappOptIn: true,
+    vehicle: {
+      id: '01920000-0000-7000-8000-000000000313',
+      registrationRaw: 'TN 09 CH 2211',
+      make: 'Maruti Suzuki',
+      model: 'Dzire VXi',
+      modelYear: 2020,
+      fuelType: 'Petrol',
+      colour: 'Silver',
+      odometerKm: 61200,
+    },
+  },
+  {
+    id: '01920000-0000-7000-8000-000000000214',
+    fullName: 'Nithya Raghavan',
+    phone: '+919841100014',
+    preferredLanguage: 'ta',
+    whatsappOptIn: true,
+    vehicle: {
+      id: '01920000-0000-7000-8000-000000000314',
+      registrationRaw: 'TN 12 AK 5504',
+      make: 'Hyundai',
+      model: 'Creta SX',
+      modelYear: 2022,
+      fuelType: 'Diesel',
+      colour: 'Black',
+      odometerKm: 33400,
+    },
+  },
+  {
+    id: '01920000-0000-7000-8000-000000000215',
+    fullName: 'Mohammed Ashraf',
+    phone: '+919841100015',
+    preferredLanguage: 'hi',
+    whatsappOptIn: true,
+    vehicle: {
+      id: '01920000-0000-7000-8000-000000000315',
+      registrationRaw: 'TN 09 BZ 8123',
+      make: 'Skoda',
+      model: 'Rapid Ambition',
+      modelYear: 2017,
+      fuelType: 'Petrol',
+      colour: 'White',
+      odometerKm: 104500,
     },
   },
 ];
@@ -862,6 +923,266 @@ export const DEMO_JOB_CARDS: readonly JobCardFixture[] = [
       },
     ],
     media: [],
+  },
+
+  /*
+   * Five more cars waiting on a decision.
+   *
+   * The seed used to hold exactly one, which made `AWAITING_APPROVAL` the one
+   * column on the board with a single card in it — and that is backwards. The
+   * queue of customers who have been quoted and have not yet answered is the
+   * biggest pile in a workshop with nobody chasing it, and it is the pile this
+   * product exists to drain. A demo shop whose approval column is emptier than
+   * its delivery column shows the problem solved before the tour has started.
+   *
+   * Each belongs to its own customer, because that is what the column means: a
+   * car cannot wait on two decisions, and a customer waiting on one is one
+   * conversation. It is also what lets anything that pulls a card off this
+   * queue — the sandbox's approval-draft button, an escalation sweep — reach
+   * for a second one without writing to somebody it messaged four seconds ago.
+   */
+  {
+    id: '01920000-0000-7000-8000-000000000411',
+    code: 'JC-2026-0011',
+    customerIndex: 10,
+    source: 'WHATSAPP',
+    complaintText: 'Clutch slipping on inclines, gear shift feels notchy',
+    targetState: 'AWAITING_APPROVAL',
+    script: [...PATHS.AWAITING_APPROVAL],
+    workItems: [
+      {
+        id: '01920000-0000-7000-8000-000000000514',
+        title: 'Clutch kit replacement',
+        description: 'Replace clutch plate, pressure plate and release bearing',
+        technicianNote:
+          'Clutch slipped 400 rpm under load in third on the road test; friction plate down to rivet height.',
+        requiresApproval: true,
+        estimatedMinutes: 240,
+        lines: [
+          {
+            kind: 'PART',
+            description: 'Clutch kit (plate, cover, bearing)',
+            quantityMilli: 1000,
+            unitPricePaise: 1180000,
+          },
+          {
+            kind: 'LABOUR',
+            description: 'Gearbox removal and clutch fitment',
+            quantityMilli: 4000,
+            unitPricePaise: 60000,
+          },
+        ],
+      },
+    ],
+    media: [
+      {
+        id: '01920000-0000-7000-8000-000000000608',
+        workItemIndex: 0,
+        caption: 'Clutch friction plate worn to the rivets',
+      },
+    ],
+  },
+  {
+    id: '01920000-0000-7000-8000-000000000412',
+    code: 'JC-2026-0012',
+    customerIndex: 11,
+    source: 'WALK_IN',
+    complaintText: 'Knocking from the front over speed breakers',
+    targetState: 'AWAITING_APPROVAL',
+    script: [...PATHS.AWAITING_APPROVAL],
+    workItems: [
+      {
+        id: '01920000-0000-7000-8000-000000000515',
+        title: 'Front strut mount replacement',
+        description: 'Replace both front strut mounts and bearings',
+        technicianNote:
+          'Both front strut mounts have play by hand on the lift; the rubber has separated on the near side.',
+        requiresApproval: true,
+        estimatedMinutes: 150,
+        lines: [
+          {
+            kind: 'PART',
+            description: 'Front strut mount kit (pair)',
+            quantityMilli: 1000,
+            unitPricePaise: 420000,
+          },
+          {
+            kind: 'LABOUR',
+            description: 'Suspension strip and refit',
+            quantityMilli: 2500,
+            unitPricePaise: 60000,
+          },
+        ],
+      },
+      {
+        id: '01920000-0000-7000-8000-000000000516',
+        title: 'Front stabiliser link rods',
+        description: 'Replace both front link rods',
+        technicianNote: 'Both link rod ball joints knock under a pry bar; the boots are split.',
+        requiresApproval: true,
+        estimatedMinutes: 45,
+        lines: [
+          {
+            kind: 'PART',
+            description: 'Stabiliser link rod (pair)',
+            quantityMilli: 1000,
+            unitPricePaise: 145000,
+          },
+        ],
+      },
+    ],
+    media: [
+      {
+        id: '01920000-0000-7000-8000-000000000609',
+        workItemIndex: 0,
+        caption: 'Separated rubber on the near-side strut mount',
+      },
+    ],
+  },
+  {
+    id: '01920000-0000-7000-8000-000000000413',
+    code: 'JC-2026-0013',
+    customerIndex: 12,
+    source: 'PAPER_CARD',
+    complaintText: 'Steering pulls left, front tyres wearing on the inner edge',
+    targetState: 'AWAITING_APPROVAL',
+    script: [...PATHS.AWAITING_APPROVAL],
+    workItems: [
+      {
+        id: '01920000-0000-7000-8000-000000000517',
+        title: 'Front tyre pair replacement',
+        description: 'Replace both front tyres and dispose of the old pair',
+        technicianNote:
+          'Inner shoulders down to 1.4mm against a 1.6mm legal limit; cords visible on the near side.',
+        requiresApproval: true,
+        estimatedMinutes: 60,
+        lines: [
+          {
+            kind: 'PART',
+            description: '185/65 R15 tyre',
+            quantityMilli: 2000,
+            unitPricePaise: 465000,
+          },
+          {
+            kind: 'LABOUR',
+            description: 'Fitting and balancing (2 wheels)',
+            quantityMilli: 2000,
+            unitPricePaise: 25000,
+          },
+        ],
+      },
+      {
+        id: '01920000-0000-7000-8000-000000000518',
+        title: 'Four-wheel alignment',
+        description: 'Set camber and toe to manufacturer specification',
+        technicianNote: 'Front toe out by 2.4mm total, which is what ate the inner shoulders.',
+        requiresApproval: true,
+        estimatedMinutes: 45,
+        lines: [
+          {
+            kind: 'LABOUR',
+            description: 'Four-wheel alignment',
+            quantityMilli: 1000,
+            unitPricePaise: 90000,
+          },
+        ],
+      },
+    ],
+    media: [
+      {
+        id: '01920000-0000-7000-8000-000000000610',
+        workItemIndex: 0,
+        caption: 'Cords showing on the near-side front inner shoulder',
+      },
+    ],
+  },
+  {
+    id: '01920000-0000-7000-8000-000000000414',
+    code: 'JC-2026-0014',
+    customerIndex: 13,
+    source: 'WHATSAPP',
+    complaintText: 'Rattle from under the car at low speed',
+    targetState: 'AWAITING_APPROVAL',
+    script: [...PATHS.AWAITING_APPROVAL],
+    workItems: [
+      {
+        id: '01920000-0000-7000-8000-000000000519',
+        title: 'Exhaust heat shield repair',
+        description: 'Replace the corroded centre heat shield and its mounts',
+        technicianNote:
+          'Centre heat shield corroded through at both mounts; it is the rattle, reproduced by hand on the lift.',
+        requiresApproval: true,
+        estimatedMinutes: 60,
+        lines: [
+          {
+            kind: 'PART',
+            description: 'Exhaust heat shield and mounting kit',
+            quantityMilli: 1000,
+            unitPricePaise: 168000,
+          },
+          {
+            kind: 'LABOUR',
+            description: 'Exhaust shield fitment',
+            quantityMilli: 1000,
+            unitPricePaise: 55000,
+          },
+        ],
+      },
+    ],
+    media: [
+      {
+        id: '01920000-0000-7000-8000-000000000611',
+        workItemIndex: 0,
+        caption: 'Heat shield corroded through at the rear mount',
+      },
+    ],
+  },
+  {
+    id: '01920000-0000-7000-8000-000000000415',
+    code: 'JC-2026-0015',
+    customerIndex: 14,
+    source: 'CONSOLE',
+    complaintText: 'Timing belt due by the service book, whine from the engine bay',
+    targetState: 'AWAITING_APPROVAL',
+    script: [...PATHS.AWAITING_APPROVAL],
+    workItems: [
+      {
+        id: '01920000-0000-7000-8000-000000000520',
+        title: 'Timing belt and water pump',
+        description: 'Replace timing belt, tensioner, idlers and water pump',
+        technicianNote:
+          'Belt at 104,500 km against a 90,000 km interval; the water pump bearing is the whine, audible through a stethoscope.',
+        requiresApproval: true,
+        estimatedMinutes: 300,
+        lines: [
+          {
+            kind: 'PART',
+            description: 'Timing belt kit with water pump',
+            quantityMilli: 1000,
+            unitPricePaise: 985000,
+          },
+          {
+            kind: 'CONSUMABLE',
+            description: 'Coolant (long life)',
+            quantityMilli: 4000,
+            unitPricePaise: 42000,
+          },
+          {
+            kind: 'LABOUR',
+            description: 'Timing belt and pump labour',
+            quantityMilli: 5000,
+            unitPricePaise: 60000,
+          },
+        ],
+      },
+    ],
+    media: [
+      {
+        id: '01920000-0000-7000-8000-000000000612',
+        workItemIndex: 0,
+        caption: 'Timing belt showing cracking between the teeth',
+      },
+    ],
   },
 ];
 

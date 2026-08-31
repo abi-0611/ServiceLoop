@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { SANDBOX_VERIFY_TOKEN, SandboxWhatsAppAdapter } from '@serviceloop/adapters';
 import { getEnv, resetEnvCache } from '@serviceloop/config';
 import {
   blindIndex,
@@ -6,6 +7,7 @@ import {
   runMigrations,
   schema,
   DEMO_ADVISOR,
+  DEMO_JOB_CARDS,
   DEMO_OWNER,
   DEMO_SHOP_ID,
   seedDemoShop,
@@ -20,9 +22,15 @@ import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainer
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
- * API integration tests (phase 1.8 acceptance): sign in as an advisor, read the
- * board, be refused a guardrail write, and fail to see another shop's data —
- * with 404 rather than 403, so no existence leaks.
+ * API integration tests.
+ *
+ * Phase 1.8 acceptance: sign in as an advisor, read the board, be refused a
+ * guardrail write, and fail to see another shop's data — with 404 rather than
+ * 403, so no existence leaks.
+ *
+ * Phase 2 adds the channel surface: the webhook handshake, signature
+ * verification over the raw bytes, the conversations inbox, console intake and
+ * the sandbox simulator.
  */
 
 const POSTGRES_IMAGE =
@@ -258,7 +266,10 @@ describe('job cards', () => {
       }>;
     };
 
-    expect(body.totalCards).toBe(10);
+    // Counted from the fixture rather than written down here: the seed is the
+    // shop's shape and it changes when the demo needs a different one, but the
+    // board must always show every card in it and never invent one.
+    expect(body.totalCards).toBe(DEMO_JOB_CARDS.length);
     expect(body.columns).toHaveLength(12);
 
     const states = body.columns
@@ -486,5 +497,215 @@ describe('audit endpoints', () => {
       .expect(200);
 
     expect(response.body).toMatchObject({ counts: { PENDING: expect.any(Number) }, events: [] });
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * Phase 2 — channels & intake
+ * -------------------------------------------------------------------------- */
+
+describe('whatsapp webhook', () => {
+  it('echoes the challenge when the verify token matches', async () => {
+    const response = await request(server)
+      .get('/webhooks/whatsapp')
+      .query({
+        'hub.mode': 'subscribe',
+        'hub.verify_token': SANDBOX_VERIFY_TOKEN,
+        'hub.challenge': 'challenge-42',
+      })
+      .expect(200);
+
+    expect(response.text).toBe('challenge-42');
+  });
+
+  it('refuses the handshake with the wrong verify token', async () => {
+    await request(server)
+      .get('/webhooks/whatsapp')
+      .query({
+        'hub.mode': 'subscribe',
+        'hub.verify_token': 'not-the-token',
+        'hub.challenge': 'challenge-42',
+      })
+      .expect(401);
+  });
+
+  it('rejects a tampered payload before parsing it', async () => {
+    const adapter = new SandboxWhatsAppAdapter({ deliveryMode: 'manual' });
+    const delivery = adapter.injectInbound({
+      kind: 'text',
+      from: '+919841100099',
+      text: 'hello',
+    });
+
+    // The signature is computed over the original bytes; changing one word
+    // must invalidate it. If this ever passes, every forged webhook does too.
+    const tampered = delivery.rawBody.replace('hello', 'hell0');
+    const response = await request(server)
+      .post('/webhooks/whatsapp')
+      .set('content-type', 'application/json')
+      .set('x-hub-signature-256', delivery.signatureHeader as string)
+      .send(tampered);
+
+    // 401, not 500. Meta retries a 5xx, so a permanently invalid signature
+    // would be redelivered forever; a 4xx tells it to stop.
+    expect(response.status).toBe(401);
+    expect((response.body as { detail: string }).detail).toContain('X-Hub-Signature-256');
+  });
+
+  it('accepts a correctly signed delivery and routes it', async () => {
+    const adapter = new SandboxWhatsAppAdapter({ deliveryMode: 'manual' });
+    const phone = `+9198${String(Date.now()).slice(-8)}`;
+    const delivery = adapter.injectInbound({
+      kind: 'text',
+      from: phone,
+      displayName: 'Webhook tester',
+      text: 'Is my car ready?',
+    });
+
+    const response = await request(server)
+      .post('/webhooks/whatsapp')
+      .set('content-type', 'application/json')
+      .set('x-hub-signature-256', delivery.signatureHeader as string)
+      .send(delivery.rawBody)
+      .expect(200);
+
+    expect(response.body).toMatchObject({ received: 1 });
+
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const inbox = await request(server)
+      .get('/conversations')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    // Newest first, and this thread was just touched. It is UNKNOWN because
+    // the shop has never seen this number — which is what earns it the
+    // identification prompt rather than silence.
+    const threads = (inbox.body as { threads: Array<{ id: string; kind: string }> }).threads;
+    const thread = threads[0];
+    expect(thread?.kind).toBe('UNKNOWN');
+
+    const detail = await request(server)
+      .get(`/conversations/${thread?.id ?? ''}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = detail.body as {
+      messages: Array<{ direction: string; body: string }>;
+    };
+    expect(body.messages.some((message) => message.body === 'Is my car ready?')).toBe(true);
+    // And the shop answered, disclosing the AI as master §6 requires.
+    expect(
+      body.messages.some(
+        (message) =>
+          message.direction === 'OUTBOUND' &&
+          message.body.toLowerCase().includes('serviceloop assistant'),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('conversations', () => {
+  it('never returns a full phone number to the console', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const response = await request(server)
+      .get('/conversations')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    for (const thread of (response.body as { threads: Array<{ addressMasked: string }> }).threads) {
+      expect(thread.addressMasked).not.toMatch(/\d{10}/);
+    }
+  });
+
+  it('404s a thread belonging to another shop', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    await request(server)
+      .get(`/conversations/${uuidv7()}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+  });
+});
+
+describe('intake', () => {
+  it('creates an OPEN job card from the console form', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const suffix = String(Date.now()).slice(-4);
+
+    const response = await request(server)
+      .post('/intake/job-cards')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        customerName: 'Form Customer',
+        phone: `98${String(Date.now()).slice(-8)}`,
+        registration: `TN09FM${suffix}`,
+        complaints: ['Brake noise'],
+        estimateLines: [{ description: 'Front pads', quantity: 2, unitPriceRupees: 1250 }],
+      })
+      .expect(201);
+
+    const created = response.body as { jobCardId: string; code: string; workItemCount: number };
+    expect(created.code).toMatch(/^JC-/);
+    expect(created.workItemCount).toBeGreaterThan(0);
+
+    const detail = await request(server)
+      .get(`/jobcards/${created.jobCardId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(detail.body).toMatchObject({ state: 'OPEN', source: 'CONSOLE' });
+  });
+
+  it('rejects a form whose registration cannot be normalised', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    await request(server)
+      .post('/intake/job-cards')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ customerName: 'Bad Plate', phone: '9840012345', registration: '' })
+      .expect(400);
+  });
+
+  it('404s a draft belonging to another shop', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    await request(server)
+      .get(`/intake/drafts/${uuidv7()}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+  });
+});
+
+describe('sandbox simulator', () => {
+  it('lists personas drawn from the seeded shop', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const response = await request(server)
+      .get('/sandbox/personas')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const body = response.body as { personas: Array<{ kind: string }> };
+    expect(body.personas.some((persona) => persona.kind === 'CUSTOMER')).toBe(true);
+    expect(body.personas.some((persona) => persona.kind === 'STAFF')).toBe(true);
+  });
+
+  it('injects a message and returns the pipeline trace', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const personas = await request(server)
+      .get('/sandbox/personas')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const customer = (personas.body as { personas: Array<{ id: string; kind: string }> }).personas.find(
+      (persona) => persona.kind === 'CUSTOMER',
+    );
+    expect(customer).toBeDefined();
+
+    const response = await request(server)
+      .post('/sandbox/inject')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ personaId: customer?.id, kind: 'text', text: 'Hello from the simulator' })
+      .expect(201);
+
+    const body = response.body as { trace: Array<{ stage: string }>; conversationId: string | null };
+    expect(body.conversationId).not.toBeNull();
+    expect(body.trace.map((step) => step.stage)).toContain('router');
   });
 });

@@ -17,3 +17,8 @@ test-results/
 .pnpm-store/
 *.zip
 test/e2e/.auth/
+
+# Generated OCR eval fixtures. `pnpm eval:ocr` renders them deterministically
+# from the HTML templates, and manifest.json records the template hash each
+# image was built from, so committing ~5 MB of PNGs would only add drift.
+packages/simulator/fixtures/ocr/

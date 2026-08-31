@@ -111,6 +111,17 @@ export function checkOfferedPrice(
 export interface OutboundHistory {
   /** Timestamps of prior outbound messages to this customer, newest first. */
   readonly sentAt: readonly Date[];
+  /**
+   * This message answers something the customer just said.
+   *
+   * Exempt from the **minimum interval** only. That knob exists to stop a shop
+   * sending two business-initiated messages back to back; applied to a reply it
+   * means a customer who asks a question within an hour of the last message
+   * gets silence, which is the opposite of what the cap is protecting them
+   * from. The daily and weekly caps still apply in full — a shop still cannot
+   * send more than three messages a day, however conversational it is being.
+   */
+  readonly isReply?: boolean;
 }
 
 export function checkFrequencyCaps(
@@ -142,7 +153,7 @@ export function checkFrequencyCaps(
     (latest, sent) => (latest === null || sent.getTime() > latest ? sent.getTime() : latest),
     null,
   );
-  if (mostRecent !== null) {
+  if (mostRecent !== null && history.isReply !== true) {
     const minutesSince = (at.getTime() - mostRecent) / 60_000;
     if (minutesSince < caps.minMinutesBetweenMessages) {
       return deny(
@@ -182,8 +193,20 @@ export function checkConsent(
   return PASS;
 }
 
+/**
+ * The kinds of thing a customer-visible claim may cite.
+ *
+ * The first three are phase 3's: what a technician wrote, what the estimate
+ * says, what the camera saw. Phase 4 adds the two a status answer needs —
+ * `JOB_CARD_STATE` (the card's live state, which is a fact about the vehicle)
+ * and `ETA` (an entry in the versioned ETA history, which carries both a time
+ * and the reason it moved). Both are records the system already holds, so
+ * grounding an answer in them is citation rather than invention; without them
+ * "your car is in quality check, ready by 4pm" would have nothing to anchor to
+ * and every status reply would be blocked (L7).
+ */
 export interface EvidenceRef {
-  readonly kind: 'MEDIA' | 'ESTIMATE_LINE' | 'TECHNICIAN_NOTE';
+  readonly kind: 'MEDIA' | 'ESTIMATE_LINE' | 'TECHNICIAN_NOTE' | 'JOB_CARD_STATE' | 'ETA';
   readonly id: string;
 }
 

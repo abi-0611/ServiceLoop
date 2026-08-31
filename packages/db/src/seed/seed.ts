@@ -1,4 +1,9 @@
-import { createStoragePort, mediaKey, type StoragePort } from '@serviceloop/adapters';
+import {
+  createStoragePort,
+  mediaKey,
+  SANDBOX_PHONE_NUMBER_ID,
+  type StoragePort,
+} from '@serviceloop/adapters';
 import { type Env, defaultShopConfig, getEnv } from '@serviceloop/config';
 import {
   GuardrailService,
@@ -43,6 +48,7 @@ import {
   DEMO_SHOP,
   DEMO_SHOP_ID,
   DEMO_STAFF,
+  DEMO_STAFF_GROUP_ID,
   DEMO_TECHNICIAN,
   type JobCardFixture,
 } from './fixtures';
@@ -132,9 +138,24 @@ export async function seedDemoShop(
 
   // The config row is created through the guardrail service so its creation is
   // audited exactly like any later change.
+  //
+  // The sandbox phone-number id is part of that config rather than a special
+  // case in the webhook resolver: one webhook URL serves every tenant, and the
+  // delivery's `metadata.phone_number_id` is what says which shop it belongs
+  // to. Wiring the demo shop to the sandbox number means the sandbox and Meta
+  // resolve their shop by exactly the same route.
+  const seededConfig = {
+    ...defaultShopConfig(DEMO_SHOP.timezone),
+    messaging: {
+      ...defaultShopConfig(DEMO_SHOP.timezone).messaging,
+      whatsappPhoneNumberId: SANDBOX_PHONE_NUMBER_ID,
+      staffGroupId: DEMO_STAFF_GROUP_ID,
+    },
+  };
+
   await guardrails.validateAndPatch(
     DEMO_SHOP_ID,
-    defaultShopConfig(DEMO_SHOP.timezone) as unknown as Record<string, unknown>,
+    seededConfig as unknown as Record<string, unknown>,
     { type: 'STAFF', id: DEMO_OWNER.id, displayName: DEMO_OWNER.fullName },
     SEED_TRACE,
   );

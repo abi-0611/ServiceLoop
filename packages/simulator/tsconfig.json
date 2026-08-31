@@ -10,6 +10,7 @@
     { "path": "../shared" },
     { "path": "../config" },
     { "path": "../domain" },
+    { "path": "../agent-core" },
     { "path": "../adapters" },
     { "path": "../db" }
   ]

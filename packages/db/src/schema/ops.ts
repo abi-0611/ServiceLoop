@@ -18,6 +18,7 @@ import {
   auditActorTypeEnum,
   declineKindEnum,
   escalationChannelEnum,
+  escalationRungTypeEnum,
   escalationStatusEnum,
   ledgerStatusEnum,
   objectiveEnum,
@@ -72,18 +73,31 @@ export const escalations = pgTable(
     ladderKey: text('ladder_key').notNull(),
     rung: integer('rung').notNull(),
     channel: escalationChannelEnum('channel').notNull(),
+    /**
+     * What the rung *is*, from shop config (phase 3.7) — as opposed to `channel`,
+     * which is the transport it actually used. `VOICE_OR_ADVISOR` reads as
+     * `HUMAN` on the channel column until phase 5 places the call itself, and
+     * only this column records that the shop asked for a call.
+     */
+    rungType: escalationRungTypeEnum('rung_type').notNull().default('WHATSAPP'),
+    /** The configured label, so an audit row reads in words, not indices. */
+    label: text('label'),
     status: escalationStatusEnum('status').notNull().default('SCHEDULED'),
     scheduledAt: timestamptz('scheduled_at').notNull(),
     executedAt: timestamptz('executed_at'),
+    cancelledAt: timestamptz('cancelled_at'),
     /** BullMQ delayed-job id, so a cancelled objective can drop its timer. */
     queueJobId: text('queue_job_id'),
     skipReason: text('skip_reason'),
+    /** What the rung did: message id, advisor task id, or the block code. */
+    resultDetail: text('result_detail'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     uniqueIndex('escalations_subject_rung_key').on(table.subjectType, table.subjectId, table.rung),
     index('escalations_due_idx').on(table.status, table.scheduledAt),
+    index('escalations_shop_subject_idx').on(table.shopId, table.subjectId, table.status),
   ],
 );
 
@@ -92,7 +106,7 @@ export const shopConfig = pgTable('shop_config', {
     .primaryKey()
     .references(() => shops.id, { onDelete: 'cascade' }),
   configVersion: integer('config_version').notNull().default(1),
-  /** Validated against `ShopConfigV1Schema` on every read and every write. */
+  /** Validated against `ShopConfigSchema` on every read and every write. */
   config: jsonb('config').notNull(),
   updatedById: uuid('updated_by_id').references(() => staff.id, { onDelete: 'set null' }),
   createdAt: createdAt(),

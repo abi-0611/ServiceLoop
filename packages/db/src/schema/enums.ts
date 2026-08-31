@@ -1,25 +1,58 @@
 import {
+  ADVISOR_TASK_KINDS,
+  ADVISOR_TASK_STATUSES,
+  AGENT_OBJECTIVES,
+  AGENT_RUN_OUTCOMES,
+  AGENT_RUN_STATUSES,
   APPROVAL_STATUSES,
   AUDIT_ACTOR_TYPES,
   CHANNEL_TYPES,
   CONSENT_PURPOSES,
+  CONSENT_SOURCES,
   CONSENT_STATUSES,
+  CONVERSATION_CATEGORIES,
+  CONVERSATION_KINDS,
   CONVERSATION_STATES,
+  CUSTOMER_DECISIONS,
   DECLINE_KINDS,
+  DELIVERY_BOOKING_STATUSES,
   ESCALATION_CHANNELS,
+  ESCALATION_RUNG_TYPES,
   ESCALATION_STATUSES,
   ESTIMATE_LINE_KINDS,
   ESTIMATE_STATUSES,
+  ETA_MATERIALITIES,
+  ETA_REASONS,
+  GATE_PASS_STATUSES,
+  GATE_PASS_VERIFY_RESULTS,
+  INTAKE_DRAFT_STATUSES,
+  INTAKE_SOURCES,
+  INVOICE_STATUSES,
   JOB_CARD_SOURCES,
   JOB_CARD_STATES,
   LANGUAGES,
   LEDGER_STATUSES,
+  LLM_TASK_CLASSES,
   MEDIA_KINDS,
+  MEDIA_ORIGINS,
+  MERGE_SUGGESTION_KINDS,
+  MERGE_SUGGESTION_STATUSES,
   MESSAGE_DIRECTIONS,
+  MESSAGE_KINDS,
   MESSAGE_STATUSES,
   OBJECTIVES,
   OUTBOX_STATUSES,
+  PAYMENT_EVENT_KINDS,
+  PAYMENT_METHODS,
+  PAYMENT_STATUSES,
+  REVIEW_ACTIONS,
   STAFF_ROLES,
+  STATUS_SIGNAL_ROUTES,
+  STATUS_SIGNAL_SOURCES,
+  STATUS_SIGNAL_TYPES,
+  TASK_URGENCIES,
+  WA_TEMPLATE_CATEGORIES,
+  WA_TEMPLATE_STATUSES,
   WORK_ITEM_STATES,
 } from '@serviceloop/shared';
 import { pgEnum } from 'drizzle-orm/pg-core';
@@ -53,3 +86,48 @@ export const escalationChannelEnum = pgEnum('escalation_channel', ESCALATION_CHA
 export const escalationStatusEnum = pgEnum('escalation_status', ESCALATION_STATUSES);
 export const auditActorTypeEnum = pgEnum('audit_actor_type', AUDIT_ACTOR_TYPES);
 export const outboxStatusEnum = pgEnum('outbox_status', OUTBOX_STATUSES);
+
+/* Phase 2 — channels & intake. */
+export const conversationKindEnum = pgEnum('conversation_kind', CONVERSATION_KINDS);
+export const messageKindEnum = pgEnum('message_kind', MESSAGE_KINDS);
+export const conversationCategoryEnum = pgEnum('conversation_category', CONVERSATION_CATEGORIES);
+export const waTemplateCategoryEnum = pgEnum('wa_template_category', WA_TEMPLATE_CATEGORIES);
+export const waTemplateStatusEnum = pgEnum('wa_template_status', WA_TEMPLATE_STATUSES);
+export const intakeSourceEnum = pgEnum('intake_source', INTAKE_SOURCES);
+export const intakeDraftStatusEnum = pgEnum('intake_draft_status', INTAKE_DRAFT_STATUSES);
+export const mergeSuggestionKindEnum = pgEnum('merge_suggestion_kind', MERGE_SUGGESTION_KINDS);
+export const mergeSuggestionStatusEnum = pgEnum('merge_suggestion_status', MERGE_SUGGESTION_STATUSES);
+export const mediaOriginEnum = pgEnum('media_origin', MEDIA_ORIGINS);
+export const consentSourceEnum = pgEnum('consent_source', CONSENT_SOURCES);
+
+/* Phase 4 — status sentinel, delivery & payments. */
+export const statusSignalTypeEnum = pgEnum('status_signal_type', STATUS_SIGNAL_TYPES);
+export const statusSignalSourceEnum = pgEnum('status_signal_source', STATUS_SIGNAL_SOURCES);
+export const statusSignalRouteEnum = pgEnum('status_signal_route', STATUS_SIGNAL_ROUTES);
+export const etaReasonEnum = pgEnum('eta_reason', ETA_REASONS);
+export const etaMaterialityEnum = pgEnum('eta_materiality', ETA_MATERIALITIES);
+export const paymentStatusEnum = pgEnum('payment_status', PAYMENT_STATUSES);
+export const paymentEventKindEnum = pgEnum('payment_event_kind', PAYMENT_EVENT_KINDS);
+export const paymentMethodEnum = pgEnum('payment_method', PAYMENT_METHODS);
+export const invoiceStatusEnum = pgEnum('invoice_status', INVOICE_STATUSES);
+export const deliveryBookingStatusEnum = pgEnum(
+  'delivery_booking_status',
+  DELIVERY_BOOKING_STATUSES,
+);
+export const gatePassStatusEnum = pgEnum('gate_pass_status', GATE_PASS_STATUSES);
+export const gatePassVerifyResultEnum = pgEnum(
+  'gate_pass_verify_result',
+  GATE_PASS_VERIFY_RESULTS,
+);
+
+/* Phase 3 — agent runtime & approval autopilot. */
+export const llmTaskClassEnum = pgEnum('llm_task_class', LLM_TASK_CLASSES);
+export const agentObjectiveEnum = pgEnum('agent_objective', AGENT_OBJECTIVES);
+export const agentRunStatusEnum = pgEnum('agent_run_status', AGENT_RUN_STATUSES);
+export const agentRunOutcomeEnum = pgEnum('agent_run_outcome', AGENT_RUN_OUTCOMES);
+export const customerDecisionEnum = pgEnum('customer_decision', CUSTOMER_DECISIONS);
+export const escalationRungTypeEnum = pgEnum('escalation_rung_type', ESCALATION_RUNG_TYPES);
+export const advisorTaskKindEnum = pgEnum('advisor_task_kind', ADVISOR_TASK_KINDS);
+export const advisorTaskStatusEnum = pgEnum('advisor_task_status', ADVISOR_TASK_STATUSES);
+export const taskUrgencyEnum = pgEnum('task_urgency', TASK_URGENCIES);
+export const reviewActionEnum = pgEnum('review_action', REVIEW_ACTIONS);

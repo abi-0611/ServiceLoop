@@ -17,7 +17,23 @@ import { type Result, err, ok } from './result';
 export type RegistrationKind = 'STANDARD' | 'BH_SERIES';
 
 export type RegistrationNormalisationError =
-  { kind: 'EMPTY' } | { kind: 'UNRECOGNISED_FORMAT'; cleaned: string };
+  | { kind: 'EMPTY' }
+  | { kind: 'UNRECOGNISED_FORMAT'; cleaned: string }
+  | { kind: 'UNKNOWN_STATE_CODE'; cleaned: string; stateCode: string };
+
+/**
+ * RTO state and union-territory codes.
+ *
+ * Checking against the real list is what separates "looks like a registration"
+ * from "is one": OCR happily reads `TN` as `IN`, and without this an invented
+ * state code becomes a vehicle record nobody can ever match again. Includes the
+ * historic codes (`AP`, `UP`, `OR`, `UA`) still on plates in service today.
+ */
+export const RTO_STATE_CODES: ReadonlySet<string> = new Set([
+  'AN', 'AP', 'AR', 'AS', 'BR', 'CG', 'CH', 'DD', 'DL', 'DN', 'GA', 'GJ', 'HP', 'HR',
+  'JH', 'JK', 'KA', 'KL', 'LA', 'LD', 'MH', 'ML', 'MN', 'MP', 'MZ', 'NL', 'OD', 'OR',
+  'PB', 'PY', 'RJ', 'SK', 'TN', 'TR', 'TS', 'UA', 'UK', 'UP', 'WB',
+]);
 
 const STANDARD_RE = /^([A-Z]{2})(\d{1,2})([A-Z]{0,3})(\d{1,4})$/;
 const BH_RE = /^(\d{2})(BH)(\d{4})([A-Z]{1,2})$/;
@@ -64,11 +80,21 @@ export function normaliseRegistration(
   const standard = STANDARD_RE.exec(cleaned);
   if (standard) {
     const [, stateCode = '', rto = '', series = '', number = ''] = standard;
-    return ok({
-      normalised: `${stateCode}${rto.padStart(2, '0')}${series}${number.padStart(4, '0')}`,
-      kind: 'STANDARD',
-      stateCode,
-    });
+    if (RTO_STATE_CODES.has(stateCode)) {
+      return ok({
+        normalised: `${stateCode}${rto.padStart(2, '0')}${series}${number.padStart(4, '0')}`,
+        kind: 'STANDARD',
+        stateCode,
+      });
+    }
+    // Shape is right, state is not. Try the OCR repair before giving up: `1N`
+    // for `TN` reaches here, and repairing it is exactly the point.
+    const repairedState = repairCommonOcrErrors(cleaned);
+    if (repairedState !== null && repairedState !== cleaned) {
+      const retry = normaliseRegistration(repairedState);
+      if (retry.ok) return retry;
+    }
+    return err({ kind: 'UNKNOWN_STATE_CODE', cleaned, stateCode });
   }
 
   const repaired = repairCommonOcrErrors(cleaned);
@@ -98,6 +124,40 @@ function repairCommonOcrErrors(cleaned: string): string | null {
   }
 
   return chars.join('');
+}
+
+/**
+ * Levenshtein distance, abandoned once it exceeds `limit`.
+ *
+ * Used to spot OCR near-misses between registrations (`TN09BX1234` against
+ * `TN09BX1284`). The bound matters: a workshop's vehicle list is compared on
+ * every intake, and only distances of 1–2 are ever interesting.
+ */
+export function boundedEditDistance(left: string, right: string, limit: number): number {
+  if (left === right) return 0;
+  if (Math.abs(left.length - right.length) > limit) return limit + 1;
+
+  let previous = Array.from({ length: right.length + 1 }, (_unused, index) => index);
+
+  for (let i = 1; i <= left.length; i += 1) {
+    const current = [i];
+    let rowMinimum = i;
+
+    for (let j = 1; j <= right.length; j += 1) {
+      const substitution = (previous[j - 1] as number) + (left[i - 1] === right[j - 1] ? 0 : 1);
+      const deletion = (previous[j] as number) + 1;
+      const insertion = (current[j - 1] as number) + 1;
+      const best = Math.min(substitution, deletion, insertion);
+      current.push(best);
+      if (best < rowMinimum) rowMinimum = best;
+    }
+
+    // Every remaining row can only add cost, so we can stop here.
+    if (rowMinimum > limit) return limit + 1;
+    previous = current;
+  }
+
+  return previous[right.length] as number;
 }
 
 /** `TN09BX1234` → `TN 09 BX 1234` for console + customer-facing display. */

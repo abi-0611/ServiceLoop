@@ -3,6 +3,14 @@ import { CATALOGUES, type StringKey } from './catalogue';
 
 export { CATALOGUES } from './catalogue';
 export type { StringKey, Catalogue } from './catalogue';
+export {
+  isOptIn,
+  isOptOut,
+  KEYWORDS,
+  matchKeyword,
+  normaliseKeywordText,
+  type KeywordIntent,
+} from './keywords';
 
 export type TemplateParams = Readonly<Record<string, string | number>>;
 

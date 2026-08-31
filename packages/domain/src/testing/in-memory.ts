@@ -7,10 +7,12 @@ import type {
   AuditAppender,
   AuditAppendInput,
   AuditRecord,
+  HandoffAdvisor,
   JobCardStateWrite,
   JobCardStore,
   OutboxWriter,
   ShopConfigStore,
+  ShopDirectory,
   StoredShopConfig,
   UnitOfWork,
   WorkItemStateWrite,
@@ -65,10 +67,109 @@ interface WorldSnapshot {
   readonly audit: string;
   readonly outbox: string;
   readonly ledger: string;
+  readonly conversations: string;
+  readonly messages: string;
+  readonly consents: string;
+  readonly customers: string;
+  readonly staffByPhone: string;
+  readonly advisors: string;
+  readonly media: string;
+}
+
+/**
+ * Rows the messaging module owns. Held on the same world as the job-card rows
+ * so one `InMemoryUnitOfWork` rolls both back together — a router transaction
+ * writes a conversation, a message *and* an audit entry, and a partial rollback
+ * would be a test that proves nothing.
+ */
+export interface ConversationRow {
+  id: string;
+  shopId: string;
+  kind: 'CUSTOMER' | 'STAFF_GROUP' | 'UNKNOWN';
+  channel: 'WHATSAPP' | 'SMS' | 'VOICE' | 'CONSOLE';
+  customerId: string | null;
+  externalThreadId: string | null;
+  externalAddress: string | null;
+  displayName: string | null;
+  state: 'OPEN' | 'SNOOZED' | 'CLOSED';
+  language: 'en' | 'ta' | 'hi';
+  lastInboundAt: Date | null;
+  lastOutboundAt: Date | null;
+  windowExpiresAt: Date | null;
+  unreadCount: number;
+  humanOverrideAt: Date | null;
+}
+
+export interface MessageRow {
+  id: string;
+  shopId: string;
+  conversationId: string;
+  direction: 'INBOUND' | 'OUTBOUND';
+  status: string;
+  kind: string;
+  purpose: 'SERVICE' | 'MARKETING';
+  body: string;
+  templateName: string | null;
+  templateLanguage: string | null;
+  templateVariables: readonly string[] | null;
+  conversationCategory: string | null;
+  interactive: unknown;
+  language: 'en' | 'ta' | 'hi';
+  providerMessageId: string | null;
+  mediaId: string | null;
+  jobCardId: string | null;
+  senderStaffId: string | null;
+  createdByAgent: boolean;
+  isHumanReply: boolean;
+  agentRunId: string | null;
+  approvedByStaffId: string | null;
+  scheduledFor: Date | null;
+  blockedCode: string | null;
+  blockedReason: string | null;
+  errorCode: string | null;
+  failureReason: string | null;
+  sentAt: Date | null;
+  createdAt: Date;
+}
+
+export interface ConsentRow {
+  id: string;
+  shopId: string;
+  customerId: string;
+  purpose: 'SERVICE' | 'MARKETING';
+  status: 'PENDING' | 'GRANTED' | 'REVOKED';
+  channel: string;
+  source: string;
+  evidence: string | null;
+  grantedAt: Date | null;
+  revokedAt: Date | null;
+  createdAt: Date;
+}
+
+export interface MediaRow {
+  id: string;
+  shopId: string;
+  jobCardId: string | null;
+  kind: 'PHOTO' | 'VIDEO' | 'AUDIO' | 'DOCUMENT';
+  origin: 'INBOUND_WHATSAPP' | 'CONSOLE_UPLOAD' | 'GENERATED' | 'SEED';
+  bucket: string;
+  storageKey: string;
+  contentType: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  caption: string | null;
+  thumbnailKey: string | null;
+  widthPx: number | null;
+  heightPx: number | null;
+  durationMs: number | null;
+  derivedKey: string | null;
+  derivedContentType: string | null;
+  providerMediaId: string | null;
+  createdAt: Date;
 }
 
 export class InMemoryWorld {
-  readonly shops = new Map<string, { timezone: string }>();
+  readonly shops = new Map<string, { timezone: string; name: string }>();
   readonly cards = new Map<string, CardRow>();
   readonly items = new Map<string, ItemRow>();
   readonly balances = new Map<string, Paise>();
@@ -77,8 +178,50 @@ export class InMemoryWorld {
   outbox: EventEnvelope[] = [];
   ledger: LedgerRow[] = [];
 
-  addShop(shopId: string, timezone = 'Asia/Kolkata'): void {
-    this.shops.set(shopId, { timezone });
+  readonly conversations = new Map<string, ConversationRow>();
+  messages: MessageRow[] = [];
+  consents: ConsentRow[] = [];
+  /** `${shopId}:${phoneE164}` → customer id, standing in for the blind index. */
+  readonly customers = new Map<
+    string,
+    { id: string; language: 'en' | 'ta' | 'hi'; vehicleLabel: string | null }
+  >();
+  readonly staffByPhone = new Map<string, string>();
+  /** `${shopId}` → the person a handoff request names. */
+  readonly advisors = new Map<string, { id: string; fullName: string }>();
+  readonly media = new Map<string, MediaRow>();
+
+  addCustomer(
+    shopId: string,
+    phoneE164: string,
+    id: string,
+    language: 'en' | 'ta' | 'hi' = 'en',
+    vehicleLabel: string | null = null,
+  ): void {
+    this.customers.set(`${shopId}:${phoneE164}`, { id, language, vehicleLabel });
+  }
+
+  addStaff(shopId: string, phoneE164: string, staffId: string, fullName?: string): void {
+    this.staffByPhone.set(`${shopId}:${phoneE164}`, staffId);
+    if (fullName !== undefined && !this.advisors.has(shopId)) {
+      this.advisors.set(shopId, { id: staffId, fullName });
+    }
+  }
+
+  messagesFor(conversationId: string): MessageRow[] {
+    return this.messages.filter((row) => row.conversationId === conversationId);
+  }
+
+  eventsOfType(type: string): EventEnvelope[] {
+    return this.outbox.filter((envelope) => envelope.type === type);
+  }
+
+  auditActions(): string[] {
+    return [...this.auditByShop.values()].flat().map((entry) => entry.action);
+  }
+
+  addShop(shopId: string, timezone = 'Asia/Kolkata', name = 'Sri Murugan Auto Works'): void {
+    this.shops.set(shopId, { timezone, name });
   }
 
   addCard(row: { id?: string; shopId: string; state: JobCardState }): CardRow {
@@ -129,6 +272,13 @@ export class InMemoryWorld {
       audit: JSON.stringify([...this.auditByShop]),
       outbox: JSON.stringify(this.outbox),
       ledger: JSON.stringify(this.ledger),
+      conversations: JSON.stringify([...this.conversations]),
+      messages: JSON.stringify(this.messages),
+      consents: JSON.stringify(this.consents),
+      customers: JSON.stringify([...this.customers]),
+      staffByPhone: JSON.stringify([...this.staffByPhone]),
+      advisors: JSON.stringify([...this.advisors]),
+      media: JSON.stringify([...this.media]),
     };
   }
 
@@ -144,6 +294,17 @@ export class InMemoryWorld {
       ...row,
       followUpAfter: row.followUpAfter === null ? null : new Date(row.followUpAfter),
     }));
+
+    replaceMap(this.conversations, snapshot.conversations, reviveConversation);
+    replaceMap(this.customers, snapshot.customers);
+    replaceMap(this.staffByPhone, snapshot.staffByPhone);
+    replaceMap(this.advisors, snapshot.advisors);
+    replaceMap(this.media, snapshot.media, (row) => ({
+      ...row,
+      createdAt: new Date(row.createdAt),
+    }));
+    this.messages = (JSON.parse(snapshot.messages) as MessageRow[]).map(reviveMessage);
+    this.consents = (JSON.parse(snapshot.consents) as ConsentRow[]).map(reviveConsent);
   }
 }
 
@@ -156,6 +317,39 @@ function replaceMap<K, V>(target: Map<K, V>, serialised: string, revive?: (value
 
 function reviveCard(row: CardRow): CardRow {
   return { ...row, stateChangedAt: new Date(row.stateChangedAt) };
+}
+
+/** JSON round-tripping turns Dates into strings; rollback must restore Dates. */
+function date(value: Date | string | null): Date | null {
+  return value === null ? null : new Date(value);
+}
+
+function reviveConversation(row: ConversationRow): ConversationRow {
+  return {
+    ...row,
+    lastInboundAt: date(row.lastInboundAt),
+    lastOutboundAt: date(row.lastOutboundAt),
+    windowExpiresAt: date(row.windowExpiresAt),
+    humanOverrideAt: date(row.humanOverrideAt),
+  };
+}
+
+function reviveMessage(row: MessageRow): MessageRow {
+  return {
+    ...row,
+    scheduledFor: date(row.scheduledFor),
+    sentAt: date(row.sentAt),
+    createdAt: new Date(row.createdAt),
+  };
+}
+
+function reviveConsent(row: ConsentRow): ConsentRow {
+  return {
+    ...row,
+    grantedAt: date(row.grantedAt),
+    revokedAt: date(row.revokedAt),
+    createdAt: new Date(row.createdAt),
+  };
 }
 
 export class InMemoryUnitOfWork implements UnitOfWork<MemoryTx> {
@@ -311,6 +505,19 @@ export class InMemoryShopConfigStore implements ShopConfigStore<MemoryTx> {
   }
 }
 
+/** Shop identity, kept separate from configuration for the same reason the port is. */
+export class InMemoryShopDirectory implements ShopDirectory<MemoryTx> {
+  constructor(private readonly world: InMemoryWorld) {}
+
+  async loadShopName(_tx: MemoryTx, shopId: string): Promise<string | null> {
+    return this.world.shops.get(shopId)?.name ?? null;
+  }
+
+  async loadHandoffAdvisor(_tx: MemoryTx, shopId: string): Promise<HandoffAdvisor | null> {
+    return this.world.advisors.get(shopId) ?? null;
+  }
+}
+
 export interface DomainTestHarness {
   readonly world: InMemoryWorld;
   readonly uow: InMemoryUnitOfWork;
@@ -319,6 +526,7 @@ export interface DomainTestHarness {
   readonly audit: InMemoryAuditAppender;
   readonly outbox: InMemoryOutboxWriter;
   readonly config: InMemoryShopConfigStore;
+  readonly directory: InMemoryShopDirectory;
 }
 
 export function createDomainTestHarness(now: () => Date = () => new Date()): DomainTestHarness {
@@ -331,5 +539,6 @@ export function createDomainTestHarness(now: () => Date = () => new Date()): Dom
     audit: new InMemoryAuditAppender(world, now),
     outbox: new InMemoryOutboxWriter(world),
     config: new InMemoryShopConfigStore(world),
+    directory: new InMemoryShopDirectory(world),
   };
 }

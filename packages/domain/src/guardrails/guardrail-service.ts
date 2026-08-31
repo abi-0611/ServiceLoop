@@ -1,7 +1,7 @@
 import {
   migrateShopConfig,
   SHOP_CONFIG_VERSION,
-  ShopConfigV1Schema,
+  ShopConfigSchema,
   type ShopConfig,
 } from '@serviceloop/config';
 import {
@@ -73,7 +73,7 @@ export class GuardrailService<Tx> {
       const candidate = deepMerge(current.config as unknown as PlainObject, patch);
       candidate['configVersion'] = SHOP_CONFIG_VERSION;
 
-      const parsed = ShopConfigV1Schema.safeParse(candidate);
+      const parsed = ShopConfigSchema.safeParse(candidate);
       if (!parsed.success) {
         throw new ValidationError('Guardrail configuration patch rejected', {
           fieldErrors: parsed.error.issues.map((issue) => ({

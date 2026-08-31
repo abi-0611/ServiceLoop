@@ -21,8 +21,12 @@ import { auditEvents } from '../schema';
  * The chain head (seq + hash) is cached in Redis per shop so an append is O(1);
  * the database remains the truth, and a cache miss or a stale head falls back
  * to a `SELECT … ORDER BY seq DESC LIMIT 1` inside the caller's transaction.
- * The unique `(shop_id, seq)` index is the real serialisation point: if two
- * transactions compute the same seq, exactly one commits.
+ *
+ * Appends are serialised per shop by a transaction-scoped advisory lock, with
+ * the unique `(shop_id, seq)` index behind it as the backstop. Both are needed
+ * and neither replaces the other: the lock means concurrent appends *queue*
+ * instead of one of them failing, and the index means that even if a writer
+ * appeared that did not take the lock, two rows could never claim one seq.
  */
 
 const HEAD_KEY = (shopId: string) => `audit:head:${shopId}`;
@@ -40,6 +44,27 @@ export class AuditService implements AuditAppender<Tx> {
   ) {}
 
   async append(tx: Tx, input: AuditAppendInput): Promise<AuditRecord> {
+    /**
+     * Serialise appends for this shop, for the length of the caller's
+     * transaction.
+     *
+     * The unique `(shop_id, seq)` index is still the backstop — if two
+     * transactions somehow computed the same seq, exactly one would commit —
+     * but relying on it *alone* means the loser raises a unique violation and
+     * whatever it was doing fails. Phase 1 never hit that because a job-card
+     * transition already holds a row lock on the card, so two of them
+     * serialised anyway. Two appends about *different* subjects in the same
+     * shop have no such lock, and phase 4 made that ordinary: the consumer runs
+     * at `WORKER_CONCURRENCY`, and an ETA recalculation, a status announcement
+     * and an escalation rung all append while sitting on different rows.
+     *
+     * An advisory lock keyed on the shop is the smallest fix that makes the
+     * chain append-safe under concurrency. It is transaction-scoped, so it is
+     * released on commit or rollback without any bookkeeping, and it is held
+     * only across the head read and the insert.
+     */
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`audit:${input.shopId}`}))`);
+
     const head = await this.loadHead(tx, input.shopId);
     const seq = head.seq + 1;
     const createdAt = new Date();

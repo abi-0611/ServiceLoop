@@ -18,6 +18,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@serviceloop/adapters": "workspace:*",
     "@serviceloop/config": "workspace:*",
     "@serviceloop/domain": "workspace:*",
     "@serviceloop/shared": "workspace:*",

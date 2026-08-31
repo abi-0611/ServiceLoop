@@ -15,6 +15,27 @@
       "when": 1786634946612,
       "tag": "0001_guardrail_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786651593166,
+      "tag": "0002_phase2_channels_intake",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786742118004,
+      "tag": "0003_phase3_agent_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786860237523,
+      "tag": "0004_phase4_status_delivery_payments",
+      "breakpoints": true
     }
   ]
 }

@@ -132,9 +132,114 @@ export const MEDIA_KINDS = ['PHOTO', 'VIDEO', 'AUDIO', 'DOCUMENT'] as const;
 export const MediaKindSchema = enumOf(MEDIA_KINDS).schema;
 export type MediaKind = z.infer<typeof MediaKindSchema>;
 
+/** Where a media asset entered the system — matters for DPDP provenance. */
+export const MEDIA_ORIGINS = [
+  'INBOUND_WHATSAPP',
+  'CONSOLE_UPLOAD',
+  'GENERATED',
+  'SEED',
+] as const;
+export const MediaOriginSchema = enumOf(MEDIA_ORIGINS).schema;
+export type MediaOrigin = z.infer<typeof MediaOriginSchema>;
+
 export const CONVERSATION_STATES = ['OPEN', 'SNOOZED', 'CLOSED'] as const;
 export const ConversationStateSchema = enumOf(CONVERSATION_STATES).schema;
 export type ConversationState = z.infer<typeof ConversationStateSchema>;
+
+/**
+ * What kind of line a thread is (phase 2.3). The router classifies every
+ * inbound message into exactly one of these before anything else happens:
+ * a customer thread, the shop's staff group (the technician evidence channel),
+ * or a number nobody recognises yet.
+ */
+export const CONVERSATION_KINDS = ['CUSTOMER', 'STAFF_GROUP', 'UNKNOWN'] as const;
+export const ConversationKindSchema = enumOf(CONVERSATION_KINDS).schema;
+export type ConversationKind = z.infer<typeof ConversationKindSchema>;
+
+/** Normalised inbound/outbound message shapes shared by every channel. */
+export const MESSAGE_KINDS = [
+  'TEXT',
+  'IMAGE',
+  'AUDIO',
+  'VIDEO',
+  'DOCUMENT',
+  'STICKER',
+  'LOCATION',
+  'CONTACTS',
+  'BUTTON_REPLY',
+  'LIST_REPLY',
+  'REACTION',
+  'TEMPLATE',
+  'INTERACTIVE',
+  'SYSTEM',
+  'UNSUPPORTED',
+] as const;
+export const MessageKindSchema = enumOf(MESSAGE_KINDS).schema;
+export type MessageKind = z.infer<typeof MessageKindSchema>;
+
+/**
+ * WhatsApp conversation pricing categories. Recorded on every send so phase 7
+ * can do the billing math; ServiceLoop itself never chooses MARKETING without
+ * a MARKETING consent grant.
+ */
+export const CONVERSATION_CATEGORIES = [
+  'SERVICE',
+  'UTILITY',
+  'MARKETING',
+  'AUTHENTICATION',
+] as const;
+export const ConversationCategorySchema = enumOf(CONVERSATION_CATEGORIES).schema;
+export type ConversationCategory = z.infer<typeof ConversationCategorySchema>;
+
+/** Meta template categories (the AUTHENTICATION/UTILITY/MARKETING triad). */
+export const WA_TEMPLATE_CATEGORIES = ['UTILITY', 'MARKETING', 'AUTHENTICATION'] as const;
+export const WaTemplateCategorySchema = enumOf(WA_TEMPLATE_CATEGORIES).schema;
+export type WaTemplateCategory = z.infer<typeof WaTemplateCategorySchema>;
+
+export const WA_TEMPLATE_STATUSES = [
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'PAUSED',
+  'DISABLED',
+] as const;
+export const WaTemplateStatusSchema = enumOf(WA_TEMPLATE_STATUSES).schema;
+export type WaTemplateStatus = z.infer<typeof WaTemplateStatusSchema>;
+
+/** L2 — the three on-ramps a job card may enter through, plus the console form. */
+export const INTAKE_SOURCES = ['PHOTO', 'FORWARDED_TEXT', 'VOICE_NOTE', 'CONSOLE_FORM'] as const;
+export const IntakeSourceSchema = enumOf(INTAKE_SOURCES).schema;
+export type IntakeSource = z.infer<typeof IntakeSourceSchema>;
+
+export const INTAKE_DRAFT_STATUSES = [
+  'AWAITING_CONFIRMATION',
+  'CONFIRMED',
+  'DISCARDED',
+  'SUPERSEDED',
+  'FAILED',
+] as const;
+export const IntakeDraftStatusSchema = enumOf(INTAKE_DRAFT_STATUSES).schema;
+export type IntakeDraftStatus = z.infer<typeof IntakeDraftStatusSchema>;
+
+/** Ambiguous entity matches queue a suggestion; ServiceLoop never merges blind. */
+export const MERGE_SUGGESTION_KINDS = ['CUSTOMER', 'VEHICLE'] as const;
+export const MergeSuggestionKindSchema = enumOf(MERGE_SUGGESTION_KINDS).schema;
+export type MergeSuggestionKind = z.infer<typeof MergeSuggestionKindSchema>;
+
+export const MERGE_SUGGESTION_STATUSES = ['OPEN', 'MERGED', 'REJECTED'] as const;
+export const MergeSuggestionStatusSchema = enumOf(MERGE_SUGGESTION_STATUSES).schema;
+export type MergeSuggestionStatus = z.infer<typeof MergeSuggestionStatusSchema>;
+
+/** How a consent decision reached us — a regulator asks exactly this. */
+export const CONSENT_SOURCES = [
+  'INTERACTIVE_REPLY',
+  'KEYWORD',
+  'COUNTER_HANDOVER',
+  'CONSOLE',
+  'SEED',
+] as const;
+export const ConsentSourceSchema = enumOf(CONSENT_SOURCES).schema;
+export type ConsentSource = z.infer<typeof ConsentSourceSchema>;
 
 export const DECLINE_KINDS = ['DECLINED', 'DEFERRED'] as const;
 export const DeclineKindSchema = enumOf(DECLINE_KINDS).schema;
@@ -190,3 +295,262 @@ export type AutonomyLevel = z.infer<typeof AutonomyLevelSchema>;
 export const AUTONOMY_FLOWS = ['approval', 'status', 'delivery', 'retention', 'voice'] as const;
 export const AutonomyFlowSchema = enumOf(AUTONOMY_FLOWS).schema;
 export type AutonomyFlow = z.infer<typeof AutonomyFlowSchema>;
+
+/* -------------------------------------------------------------------------- *
+ * Phase 3 — agent runtime, approval autopilot, escalation ladders
+ * -------------------------------------------------------------------------- */
+
+/**
+ * What *kind* of work an LLM call is doing (phase 3.1).
+ *
+ * A task class, not a model: `LLM_<CLASS>_MODEL` in env maps each one to an id,
+ * so a shop can run a cheap classifier and an expensive agent without a single
+ * model string appearing in code (master §10).
+ */
+export const LLM_TASK_CLASSES = ['AGENT', 'CLASSIFY', 'EXTRACT', 'JUDGE'] as const;
+export const LlmTaskClassSchema = enumOf(LLM_TASK_CLASSES).schema;
+export type LlmTaskClass = z.infer<typeof LlmTaskClassSchema>;
+
+/**
+ * The objectives an agent run may pursue. An objective is a *goal with a
+ * termination condition*, not a prompt: the runtime decides it is met by
+ * observing tool results, never by the model saying so.
+ */
+export const AGENT_OBJECTIVES = [
+  'request_approval',
+  'resolve_partial_approval',
+  'explain_evidence',
+  /**
+   * Phase 4.5 — inbound "where's my car?" deflection. Strictly grounded in live
+   * card state, ETA history and the estimate; anything outside that routes
+   * elsewhere rather than being improvised.
+   */
+  'answer_status',
+] as const;
+export const AgentObjectiveSchema = enumOf(AGENT_OBJECTIVES).schema;
+export type AgentObjective = z.infer<typeof AgentObjectiveSchema>;
+
+/** The terminal report of a run (phase 3.2). Every run ends in exactly one. */
+export const AGENT_RUN_OUTCOMES = [
+  'objective_met',
+  'handoff',
+  'blocked',
+  'budget_exhausted',
+] as const;
+export const AgentRunOutcomeSchema = enumOf(AGENT_RUN_OUTCOMES).schema;
+export type AgentRunOutcome = z.infer<typeof AgentRunOutcomeSchema>;
+
+/**
+ * `ABORTED` is its own status rather than an outcome: a run that a human
+ * interrupted mid-step did not *decide* anything, and recording it as `blocked`
+ * would poison the graduation report with a failure the agent never caused.
+ */
+export const AGENT_RUN_STATUSES = ['RUNNING', 'FINISHED', 'ABORTED', 'FAILED'] as const;
+export const AgentRunStatusSchema = enumOf(AGENT_RUN_STATUSES).schema;
+export type AgentRunStatus = z.infer<typeof AgentRunStatusSchema>;
+
+/**
+ * What the customer decided about an approval request.
+ *
+ * `PARTIAL` is first-class, not a degraded `FULL`: approving two of five lines
+ * is the single most common real outcome, and the three that were not approved
+ * are revenue the ledger re-pitches later.
+ */
+export const CUSTOMER_DECISIONS = ['FULL', 'PARTIAL', 'DEFERRED', 'DECLINED'] as const;
+export const CustomerDecisionSchema = enumOf(CUSTOMER_DECISIONS).schema;
+export type CustomerDecision = z.infer<typeof CustomerDecisionSchema>;
+
+/**
+ * What a ladder rung *is*, as opposed to which channel it happened to use.
+ *
+ * `VOICE_OR_ADVISOR` is the load-bearing one: until phase 5 it creates a
+ * prioritised advisor task with the agent's brief, and after phase 5 it places
+ * the call. Shops configure the rung type, so the swap changes an
+ * implementation, never a shop's configuration.
+ */
+export const ESCALATION_RUNG_TYPES = [
+  'WHATSAPP',
+  'SMS',
+  'VOICE_OR_ADVISOR',
+  'OWNER_DIGEST',
+  'HUMAN',
+] as const;
+export const EscalationRungTypeSchema = enumOf(ESCALATION_RUNG_TYPES).schema;
+export type EscalationRungType = z.infer<typeof EscalationRungTypeSchema>;
+
+/** Work queued for a person (L6 — human handoff is always one step away). */
+export const ADVISOR_TASK_KINDS = [
+  'CALL_CUSTOMER',
+  'REVIEW_MESSAGE',
+  'HANDOFF',
+  'OWNER_EXCEPTION',
+  'FOLLOW_UP',
+] as const;
+export const AdvisorTaskKindSchema = enumOf(ADVISOR_TASK_KINDS).schema;
+export type AdvisorTaskKind = z.infer<typeof AdvisorTaskKindSchema>;
+
+export const ADVISOR_TASK_STATUSES = ['OPEN', 'IN_PROGRESS', 'DONE', 'CANCELLED'] as const;
+export const AdvisorTaskStatusSchema = enumOf(ADVISOR_TASK_STATUSES).schema;
+export type AdvisorTaskStatus = z.infer<typeof AdvisorTaskStatusSchema>;
+
+export const TASK_URGENCIES = ['LOW', 'NORMAL', 'HIGH'] as const;
+export const TaskUrgencySchema = enumOf(TASK_URGENCIES).schema;
+export type TaskUrgency = z.infer<typeof TaskUrgencySchema>;
+
+/** What an advisor did with a candidate message in the review queue (3.9). */
+export const REVIEW_ACTIONS = ['APPROVE_SEND', 'EDIT_AND_SEND', 'REJECT'] as const;
+export const ReviewActionSchema = enumOf(REVIEW_ACTIONS).schema;
+export type ReviewAction = z.infer<typeof ReviewActionSchema>;
+
+/* -------------------------------------------------------------------------- *
+ * Phase 4 — status sentinel, delivery & payments
+ * -------------------------------------------------------------------------- */
+
+/**
+ * What a technician's five-second voice note actually said (phase 4.2).
+ *
+ * Four kinds, because those are the four things that change what anyone else
+ * needs to do: work moved on, work is stuck, work is finished, or something new
+ * was found. The fourth is deliberately *not* a status — `issue_found` routes
+ * into the phase-3 evidence-bundle flow, because new work needs a customer's
+ * money and therefore their consent, not a state transition.
+ */
+export const STATUS_SIGNAL_TYPES = ['progress', 'blocked_parts', 'done', 'issue_found'] as const;
+export const StatusSignalTypeSchema = enumOf(STATUS_SIGNAL_TYPES).schema;
+export type StatusSignalType = z.infer<typeof StatusSignalTypeSchema>;
+
+/** How the signal reached us. The bar for a technician is a voice note (L2). */
+export const STATUS_SIGNAL_SOURCES = ['VOICE_NOTE', 'PHOTO', 'TEXT', 'CONSOLE'] as const;
+export const StatusSignalSourceSchema = enumOf(STATUS_SIGNAL_SOURCES).schema;
+export type StatusSignalSource = z.infer<typeof StatusSignalSourceSchema>;
+
+/**
+ * What the router did with a parsed signal.
+ *
+ * `AMBIGUOUS` is its own outcome rather than a flavour of `PENDING_CONFIRMATION`
+ * because the two ask a human different questions: one asks "did Suresh mean
+ * this?", the other asks "which of these two cards?". Recording which was asked
+ * is what lets the parser's accuracy be measured later.
+ */
+export const STATUS_SIGNAL_ROUTES = [
+  'AUTO_APPLIED',
+  'PENDING_CONFIRMATION',
+  'AMBIGUOUS',
+  'ROUTED_TO_EVIDENCE',
+  'NO_CARD_MATCH',
+  'CONFIRMED',
+  'CORRECTED',
+  'DISCARDED',
+] as const;
+export const StatusSignalRouteSchema = enumOf(STATUS_SIGNAL_ROUTES).schema;
+export type StatusSignalRoute = z.infer<typeof StatusSignalRouteSchema>;
+
+/**
+ * Why an ETA moved (phase 4.3).
+ *
+ * Every ETA message states its reason ("the brake caliper part arrives by 4pm"),
+ * so the reason is a stored enum rather than prose: the copy is generated from
+ * it in the customer's language, and the same reason produces the same sentence
+ * in every language the shop runs.
+ */
+export const ETA_REASONS = [
+  'INTAKE_PROMISE',
+  'WORK_APPROVED',
+  'WORK_DECLINED',
+  'BLOCKED_PARTS',
+  'PARTS_RECEIVED',
+  'TECHNICIAN_HINT',
+  'WORK_DONE',
+  'QUALITY_PASSED',
+  'ADVISOR_OVERRIDE',
+] as const;
+export const EtaReasonSchema = enumOf(ETA_REASONS).schema;
+export type EtaReason = z.infer<typeof EtaReasonSchema>;
+
+/**
+ * Whether an ETA change is worth interrupting a customer for.
+ *
+ * A slip past the threshold is bad news and goes out immediately (the
+ * bad-news-early rule). A gain is good news and rides the next touchpoint —
+ * telling someone their car is ready *earlier* is pleasant, but it is not worth
+ * a notification at 20:55. Everything else batches.
+ */
+export const ETA_MATERIALITIES = ['MATERIAL_SLIP', 'MATERIAL_GAIN', 'IMMATERIAL'] as const;
+export const EtaMaterialitySchema = enumOf(ETA_MATERIALITIES).schema;
+export type EtaMateriality = z.infer<typeof EtaMaterialitySchema>;
+
+/** Lifecycle of a payment link (phase 4.9). Mirrors what a provider reports. */
+export const PAYMENT_STATUSES = [
+  'PENDING',
+  'PARTIALLY_PAID',
+  'PAID',
+  'FAILED',
+  'EXPIRED',
+  'CANCELLED',
+] as const;
+export const PaymentStatusSchema = enumOf(PAYMENT_STATUSES).schema;
+export type PaymentStatus = z.infer<typeof PaymentStatusSchema>;
+
+/** A single fact a provider told us about a payment. Append-only. */
+export const PAYMENT_EVENT_KINDS = [
+  'LINK_CREATED',
+  'PAID',
+  'PARTIALLY_PAID',
+  'FAILED',
+  'EXPIRED',
+  'CANCELLED',
+  'MANUAL_RECORD',
+] as const;
+export const PaymentEventKindSchema = enumOf(PAYMENT_EVENT_KINDS).schema;
+export type PaymentEventKind = z.infer<typeof PaymentEventKindSchema>;
+
+/** How the money arrived. `CASH` exists because most of these shops take it. */
+export const PAYMENT_METHODS = [
+  'UPI',
+  'CARD',
+  'NETBANKING',
+  'WALLET',
+  'CASH',
+  'BANK_TRANSFER',
+  'OTHER',
+] as const;
+export const PaymentMethodSchema = enumOf(PAYMENT_METHODS).schema;
+export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
+
+export const INVOICE_STATUSES = ['DRAFT', 'ISSUED', 'PAID', 'CANCELLED'] as const;
+export const InvoiceStatusSchema = enumOf(INVOICE_STATUSES).schema;
+export type InvoiceStatus = z.infer<typeof InvoiceStatusSchema>;
+
+/** A pickup slot the customer was offered, and what became of it (phase 4.7). */
+export const DELIVERY_BOOKING_STATUSES = [
+  'OFFERED',
+  'CHOSEN',
+  'REMINDED',
+  'COMPLETED',
+  'MISSED',
+  'CANCELLED',
+] as const;
+export const DeliveryBookingStatusSchema = enumOf(DELIVERY_BOOKING_STATUSES).schema;
+export type DeliveryBookingStatus = z.infer<typeof DeliveryBookingStatusSchema>;
+
+export const GATE_PASS_STATUSES = ['ISSUED', 'USED', 'EXPIRED', 'REVOKED'] as const;
+export const GatePassStatusSchema = enumOf(GATE_PASS_STATUSES).schema;
+export type GatePassStatus = z.infer<typeof GatePassStatusSchema>;
+
+/**
+ * What the gate person's screen shows (phase 4.10).
+ *
+ * Only `VALID` is green. Everything else is red and says which red it is — a
+ * gate person who is told "invalid" learns nothing, and one who is told "this
+ * pass expired at 18:00 yesterday" knows to call the advisor.
+ */
+export const GATE_PASS_VERIFY_RESULTS = [
+  'VALID',
+  'EXPIRED',
+  'ALREADY_USED',
+  'REVOKED',
+  'FORGED',
+  'UNKNOWN',
+] as const;
+export const GatePassVerifyResultSchema = enumOf(GATE_PASS_VERIFY_RESULTS).schema;
+export type GatePassVerifyResult = z.infer<typeof GatePassVerifyResultSchema>;

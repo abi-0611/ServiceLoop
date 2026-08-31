@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formatAdapterSelection, selectAdapters } from './adapter-selection';
 import { DEV_JWT_SECRET, EnvValidationError, loadEnv } from './env';
 import { migrateShopConfig } from './shop-config-migrations';
-import { SHOP_CONFIG_VERSION, ShopConfigV1Schema, defaultShopConfig } from './shop-config';
+import { SHOP_CONFIG_VERSION, ShopConfigSchema, defaultShopConfig } from './shop-config';
 
 describe('env', () => {
   it('defaults to DEMO_MODE and a frozen document', () => {
@@ -63,7 +63,66 @@ describe('adapter selection', () => {
 
   it('marks unimplemented ports as pending rather than claiming they are live', () => {
     const lines = formatAdapterSelection(loadEnv({}));
-    expect(lines.some((line) => line.includes('adapter[whatsapp] PENDING'))).toBe(true);
+    // Telephony is phase 5's. It is the only port left with no implementation,
+    // and the boot log must never claim a capability that does not exist.
+    expect(lines.some((line) => line.includes('adapter[telephony] PENDING'))).toBe(true);
+    expect(lines.some((line) => line.includes('PENDING')) && lines.filter((line) => line.includes('PENDING')).length).toBe(1);
+  });
+
+  it('reports every implemented port as a live sandbox adapter in DEMO_MODE', () => {
+    const lines = formatAdapterSelection(loadEnv({}));
+    // `payments` joined this list in phase 4.9: the mock adapter is a real
+    // adapter — it mints links, keeps a ledger and signs webhook payloads — so
+    // reporting it as PENDING would now understate what the process can do.
+    for (const port of ['whatsapp', 'llm', 'ocr', 'speech', 'payments']) {
+      expect(lines.some((line) => line.includes(`adapter[${port}] SANDBOX`)), port).toBe(true);
+    }
+  });
+
+  it('ties the OCR adapter to whichever LLM adapter is live', () => {
+    // OCR has no provider of its own — it is a vision model behind LlmPort —
+    // so the boot log must never claim a live reader while the LLM is sandboxed.
+    const sandboxed = selectAdapters(loadEnv({})).find((entry) => entry.port === 'ocr');
+    expect(sandboxed?.adapter).toBe('FixtureOcrAdapter');
+    expect(sandboxed?.sandbox).toBe(true);
+
+    const live = selectAdapters(
+      loadEnv({
+        DEMO_MODE: 'false',
+        LLM_DRIVER: 'anthropic',
+        ANTHROPIC_API_KEY: 'sk-test',
+        WHATSAPP_DRIVER: 'meta',
+        WHATSAPP_ACCESS_TOKEN: 'token',
+        WHATSAPP_PHONE_NUMBER_ID: '123',
+        WHATSAPP_APP_SECRET: 'secret',
+        WHATSAPP_VERIFY_TOKEN: 'verify',
+      }),
+    ).find((entry) => entry.port === 'ocr');
+    expect(live?.sandbox).toBe(false);
+    expect(live?.adapter).toContain('VisionLlmOcrAdapter');
+  });
+
+  it('refuses to boot with the live WhatsApp adapter but no credentials', () => {
+    expect(() => loadEnv({ DEMO_MODE: 'false', WHATSAPP_DRIVER: 'meta' })).toThrow(
+      /WHATSAPP_ACCESS_TOKEN is required/,
+    );
+  });
+
+  it('keeps the sandbox WhatsApp adapter in DEMO_MODE even when credentials exist', () => {
+    // A developer with a live token in their shell must not be able to message
+    // a real customer by accident.
+    const selections = selectAdapters(
+      loadEnv({
+        WHATSAPP_DRIVER: 'meta',
+        WHATSAPP_ACCESS_TOKEN: 'token',
+        WHATSAPP_PHONE_NUMBER_ID: '123',
+        WHATSAPP_APP_SECRET: 'secret',
+        WHATSAPP_VERIFY_TOKEN: 'verify',
+      }),
+    );
+    const whatsapp = selections.find((entry) => entry.port === 'whatsapp');
+    expect(whatsapp?.sandbox).toBe(true);
+    expect(whatsapp?.adapter).toBe('SandboxWhatsAppAdapter');
   });
 });
 
@@ -94,7 +153,7 @@ describe('shop config', () => {
 
   it('rejects a price floor and discount ceiling that together exceed 100%', () => {
     const config = defaultShopConfig();
-    const result = ShopConfigV1Schema.safeParse({
+    const result = ShopConfigSchema.safeParse({
       ...config,
       pricing: { priceFloorPercent: 90, discountCeilingPercent: 20 },
     });
@@ -103,7 +162,7 @@ describe('shop config', () => {
 
   it('cannot be patched to remove the AI disclosure requirement', () => {
     const config = defaultShopConfig();
-    const result = ShopConfigV1Schema.safeParse({
+    const result = ShopConfigSchema.safeParse({
       ...config,
       disclosure: { ...config.disclosure, requireFirstContactDisclosure: false },
     });
@@ -112,7 +171,7 @@ describe('shop config', () => {
 
   it('rejects a default language that is not enabled', () => {
     const config = defaultShopConfig();
-    const result = ShopConfigV1Schema.safeParse({
+    const result = ShopConfigSchema.safeParse({
       ...config,
       languages: { enabled: ['en'], default: 'ta' },
     });

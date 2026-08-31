@@ -44,8 +44,14 @@ test('shows guardrails read-only to an advisor', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Save guardrails' })).toHaveCount(0);
 });
 
-test('shows the conversations shell', async ({ page }) => {
+test('shows the conversations inbox', async ({ page }) => {
   await page.goto('/conversations');
   await expect(page.getByRole('heading', { name: 'Conversations', exact: true })).toBeVisible();
-  await expect(page.getByText('No conversations yet')).toBeVisible();
+
+  // Phase 2 filled this in. A shop that has never received a message still has
+  // a legitimate empty state, so either is a pass — what must not happen is the
+  // page failing to render at all.
+  const threads = page.getByTestId('thread-list');
+  const empty = page.getByText('No conversations yet');
+  await expect(threads.or(empty).first()).toBeVisible();
 });

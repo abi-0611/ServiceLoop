@@ -1,4 +1,4 @@
-import { defaultShopConfig } from '@serviceloop/config';
+import { defaultShopConfig, SHOP_CONFIG_VERSION } from '@serviceloop/config';
 import { fixedClock, ValidationError, uuidv7 } from '@serviceloop/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { verifyAuditChain } from '../audit/chain';
@@ -124,7 +124,7 @@ describe('GuardrailService', () => {
         ladders: {
           APPROVAL: {
             enabled: true,
-            rungs: [{ afterMinutes: 0, channel: 'WHATSAPP', label: 'Single attempt' }],
+            rungs: [{ afterMinutes: 0, type: 'WHATSAPP', label: 'Single attempt' }],
             giveUpAfterMinutes: 120,
           },
         },
@@ -151,7 +151,9 @@ describe('GuardrailService', () => {
     });
     const result = await service.validateAndPatch(SHOP_ID, {}, OWNER, 'trace-cfg-6');
     expect(result.auditEventId).not.toBeNull();
-    expect(result.config.configVersion).toBe(1);
+    // Tracks the constant rather than a literal: every future version bump must
+    // still carry a legacy document all the way forward on first write.
+    expect(result.config.configVersion).toBe(SHOP_CONFIG_VERSION);
     expect((await service.get(SHOP_ID)).migratedFrom).toBeNull();
   });
 });

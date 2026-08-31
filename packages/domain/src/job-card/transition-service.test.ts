@@ -21,7 +21,10 @@ function setup(options: { paymentBeforeDelivery?: boolean } = {}): {
   const config = defaultShopConfig();
   harness.world.configs.set(SHOP_ID, {
     ...config,
-    payments: { paymentBeforeDelivery: options.paymentBeforeDelivery ?? true },
+    // Spread rather than replace: `payments` gained five fields in phase 4, and
+    // a document missing any of them is refused by the schema on read — which
+    // is the guarantee, not an inconvenience.
+    payments: { ...config.payments, paymentBeforeDelivery: options.paymentBeforeDelivery ?? true },
   });
 
   const service = new JobCardTransitionService({

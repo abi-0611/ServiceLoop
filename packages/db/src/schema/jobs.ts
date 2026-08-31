@@ -14,12 +14,15 @@ import { createdAt, deletedAt, primaryId, timestamptz, updatedAt } from './colum
 import { customers, shops, staff, vehicles } from './core';
 import {
   approvalStatusEnum,
+  customerDecisionEnum,
   estimateLineKindEnum,
   estimateStatusEnum,
+  etaReasonEnum,
   jobCardSourceEnum,
   jobCardStateEnum,
   languageEnum,
   mediaKindEnum,
+  mediaOriginEnum,
   workItemStateEnum,
 } from './enums';
 
@@ -55,7 +58,21 @@ export const jobCards = pgTable(
       onDelete: 'set null',
     }),
     openedAt: timestamptz('opened_at'),
+    /** What the customer was told at the counter. Never rewritten (phase 4.3). */
     promisedAt: timestamptz('promised_at'),
+    /* --- phase 4.3 ------------------------------------------------------ */
+    /**
+     * The engine's current answer, denormalised from `eta_entries`.
+     *
+     * The history is the truth; this is the hot read — the board, the card
+     * drawer and the `answer_status` objective all want "when will it be ready"
+     * without folding a history, and the ETA service writes both in one
+     * transaction so they cannot disagree.
+     */
+    currentEta: timestamptz('current_eta'),
+    /** Version of the `eta_entries` row `current_eta` was copied from. */
+    etaVersion: integer('eta_version').notNull().default(0),
+    etaReason: etaReasonEnum('eta_reason'),
     deliveredAt: timestamptz('delivered_at'),
     closedAt: timestamptz('closed_at'),
     createdAt: createdAt(),
@@ -68,6 +85,8 @@ export const jobCards = pgTable(
     index('job_cards_shop_updated_idx').on(table.shopId, table.updatedAt),
     index('job_cards_customer_idx').on(table.customerId),
     index('job_cards_vehicle_idx').on(table.vehicleId),
+    // The silent-bay scan's driving index: active cards, oldest movement first.
+    index('job_cards_shop_state_changed_idx').on(table.shopId, table.state, table.stateChangedAt),
   ],
 );
 
@@ -169,12 +188,27 @@ export const mediaAssets = pgTable(
     jobCardId: uuid('job_card_id').references(() => jobCards.id, { onDelete: 'cascade' }),
     workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'set null' }),
     kind: mediaKindEnum('kind').notNull(),
+    origin: mediaOriginEnum('origin').notNull().default('CONSOLE_UPLOAD'),
     bucket: text('bucket').notNull(),
     storageKey: text('storage_key').notNull(),
     contentType: text('content_type').notNull(),
     sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
     checksumSha256: text('checksum_sha256').notNull(),
     caption: text('caption'),
+    /** Derived by the media pipeline (phase 2.4): a square inbox thumbnail. */
+    thumbnailKey: text('thumbnail_key'),
+    widthPx: integer('width_px'),
+    heightPx: integer('height_px'),
+    durationMs: integer('duration_ms'),
+    /**
+     * Normalised derivative: EXIF-rotated and resized for images, 16 kHz mono
+     * WAV for audio (what phase 4's STT consumes). Null when the original was
+     * already in the target form or could not be transcoded here.
+     */
+    derivedKey: text('derived_key'),
+    derivedContentType: text('derived_content_type'),
+    /** Provider handle, so a redelivered webhook re-uses the stored object. */
+    providerMediaId: text('provider_media_id'),
     capturedById: uuid('captured_by_id').references(() => staff.id, { onDelete: 'set null' }),
     capturedAt: timestamptz('captured_at'),
     createdAt: createdAt(),
@@ -183,6 +217,7 @@ export const mediaAssets = pgTable(
   (table) => [
     uniqueIndex('media_assets_bucket_key_key').on(table.bucket, table.storageKey),
     index('media_assets_job_card_idx').on(table.jobCardId),
+    uniqueIndex('media_assets_provider_key').on(table.shopId, table.providerMediaId),
   ],
 );
 
@@ -208,6 +243,22 @@ export const evidenceBundles = pgTable(
     mediaIds: jsonb('media_ids').notNull().default([]),
     estimateLineIds: jsonb('estimate_line_ids').notNull().default([]),
     workItemIds: jsonb('work_item_ids').notNull().default([]),
+    /** The estimate v2 draft this bundle proposes. */
+    estimateId: uuid('estimate_id'),
+    /**
+     * Sentence-level claim anchoring (phase 3.4, L7). Each entry is
+     * `{text, sources: [{kind, id}]}`, and the post-checker consumes exactly
+     * this: a sentence with no source is a sentence that never reaches a
+     * customer. Stored with the bundle rather than derived, because the
+     * question "what did we cite when we sent this" must stay answerable after
+     * the underlying note has been edited.
+     */
+    claims: jsonb('claims').notNull().default([]),
+    /** The technician words the explanation was allowed to restate. */
+    sourceNotes: jsonb('source_notes').notNull().default([]),
+    createdByRunId: uuid('created_by_run_id'),
+    explanationModel: text('explanation_model'),
+    explanationPromptHash: text('explanation_prompt_hash'),
     createdAt: createdAt(),
   },
   (table) => [index('evidence_bundles_job_card_idx').on(table.jobCardId)],
@@ -236,12 +287,27 @@ export const approvalRequests = pgTable(
     decidedAt: timestamptz('decided_at'),
     decisionChannel: text('decision_channel'),
     decisionNote: text('decision_note'),
+    /* --- phase 3.6 ----------------------------------------------------- */
+    customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'cascade' }),
+    /** The thread the buttons were sent on, and where the reply arrives. */
+    conversationId: uuid('conversation_id'),
+    /** Which ladder in shop config chases this. */
+    ladderRef: text('ladder_ref').notNull().default('APPROVAL'),
+    /** The lines put to the customer, in the order they were shown. */
+    workItemIds: jsonb('work_item_ids').notNull().default([]),
+    decision: customerDecisionEnum('decision'),
+    approvedWorkItemIds: jsonb('approved_work_item_ids').notNull().default([]),
+    approvedAmountPaise: bigint('approved_amount_paise', { mode: 'number' }).notNull().default(0),
+    /** The interactive message carrying the buttons — the reply's context id. */
+    requestMessageId: uuid('request_message_id'),
+    agentRunId: uuid('agent_run_id'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     index('approval_requests_job_card_idx').on(table.jobCardId),
     index('approval_requests_shop_status_idx').on(table.shopId, table.status),
+    index('approval_requests_conversation_idx').on(table.conversationId, table.status),
   ],
 );
 

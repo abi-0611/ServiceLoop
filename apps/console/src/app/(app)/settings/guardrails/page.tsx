@@ -1,17 +1,17 @@
-import { ShopConfigV1Schema } from '@serviceloop/config';
+import { ShopConfigSchema } from '@serviceloop/config';
 import { z } from 'zod';
 import { GuardrailForm } from '@/components/guardrail-form';
 import { serverApiFetch } from '@/lib/api';
 
 /**
- * Settings → Guardrails. The form is bound to the same `ShopConfigV1Schema`
+ * Settings → Guardrails. The form is bound to the same `ShopConfigSchema`
  * the API validates against, and validation errors come back field-scoped.
  */
 
 export const dynamic = 'force-dynamic';
 
 const ReadSchema = z.object({
-  config: ShopConfigV1Schema,
+  config: ShopConfigSchema,
   migratedFrom: z.number().nullable(),
   editable: z.boolean(),
 });

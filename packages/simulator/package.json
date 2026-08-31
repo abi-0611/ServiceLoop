@@ -16,10 +16,16 @@
     "lint": "eslint src",
     "test:unit": "vitest run",
     "test": "vitest run",
-    "demo:phase1": "tsx src/scenarios/phase1-demo.ts"
+    "demo:phase1": "tsx src/scenarios/phase1-demo.ts",
+    "demo:phase2": "tsx src/scenarios/phase2-demo.ts",
+    "eval:ocr": "tsx src/ocr/eval.ts",
+    "sim": "tsx src/cli/sim.ts",
+    "demo:phase3": "tsx src/scenarios/phase3-demo.ts",
+    "demo:phase4": "tsx src/scenarios/phase4-demo.ts"
   },
   "dependencies": {
     "@serviceloop/adapters": "workspace:*",
+    "@serviceloop/agent-core": "workspace:*",
     "@serviceloop/config": "workspace:*",
     "@serviceloop/db": "workspace:*",
     "@serviceloop/domain": "workspace:*",
@@ -27,10 +33,12 @@
     "bullmq": "^5.34.5",
     "drizzle-orm": "^0.38.3",
     "ioredis": "^5.4.2",
+    "sharp": "^0.34.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "playwright": "^1.49.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

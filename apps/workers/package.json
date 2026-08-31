@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@serviceloop/adapters": "workspace:*",
+    "@serviceloop/agent-core": "workspace:*",
     "@serviceloop/config": "workspace:*",
     "@serviceloop/db": "workspace:*",
     "@serviceloop/domain": "workspace:*",

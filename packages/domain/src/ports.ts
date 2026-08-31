@@ -109,3 +109,21 @@ export interface ShopConfigStore<Tx> {
   /** Shop timezone, used as the default when a config document predates the field. */
   loadShopTimezone(tx: Tx, shopId: string): Promise<string | null>;
 }
+
+export interface HandoffAdvisor {
+  readonly id: string;
+  readonly fullName: string;
+}
+
+/**
+ * Facts about the shop itself that customer-facing copy interpolates.
+ *
+ * Separate from `ShopConfigStore` because the two answer different questions:
+ * that one is "what has this shop configured", this one is "who is this shop,
+ * and who does a customer reach when they ask for a person" (L6).
+ */
+export interface ShopDirectory<Tx> {
+  loadShopName(tx: Tx, shopId: string): Promise<string | null>;
+  /** The advisor a handoff request names. Null when the shop has no staff. */
+  loadHandoffAdvisor(tx: Tx, shopId: string): Promise<HandoffAdvisor | null>;
+}

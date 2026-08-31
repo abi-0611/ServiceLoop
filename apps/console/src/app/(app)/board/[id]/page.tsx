@@ -1,13 +1,26 @@
-import { formatPaise, JobCardDetailSchema } from '@serviceloop/shared';
+import {
+  DeliverySummarySchema,
+  EtaHistorySchema,
+  formatPaise,
+  JobCardDetailSchema,
+  SessionSchema,
+} from '@serviceloop/shared';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { DeliveryPanel } from '@/components/delivery-panel';
+import { EtaHistory } from '@/components/eta-history';
 import { TransitionActions } from '@/components/transition-actions';
 import { Badge, Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives';
 import { ApiError, serverApiFetch } from '@/lib/api';
 
 /**
- * Card drawer: work items, estimate lines and the audit trail — the three
- * things an advisor needs to answer "what did we tell the customer, and when".
+ * Card drawer: work items, estimate lines, the ETA history and the audit trail
+ * — what an advisor needs to answer "what did we tell the customer, and when".
+ *
+ * Phase 4 added the two panels at the end of the loop. They are on this page
+ * rather than a screen of their own because the question "is it ready and has
+ * he paid?" is asked about *a car*, and an advisor who had to leave the card to
+ * answer it would be holding two screens with a customer in front of them.
  */
 
 export const dynamic = 'force-dynamic';
@@ -26,6 +39,15 @@ export default async function JobCardPage({
     if (error instanceof ApiError && error.status === 404) notFound();
     throw error;
   }
+
+  // Phase-4 reads, and a card that predates them is not an error: a shop that
+  // upgraded mid-repair has cards with no ETA history and no invoice, and the
+  // drawer should render them rather than 500.
+  const [eta, delivery, role] = await Promise.all([
+    optional(() => serverApiFetch(`/status/eta?jobCardId=${id}`, EtaHistorySchema)),
+    optional(() => serverApiFetch(`/delivery/summary?jobCardId=${id}`, DeliverySummarySchema)),
+    currentRole(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -60,6 +82,16 @@ export default async function JobCardPage({
       </Card>
 
       <TransitionActions jobCardId={card.id} allowedEvents={card.allowedEvents} />
+
+      {eta !== null && <EtaHistory history={eta} />}
+
+      {delivery !== null && (
+        <DeliveryPanel
+          jobCardId={card.id}
+          summary={delivery}
+          canOverride={role === 'OWNER'}
+        />
+      )}
 
       <Card>
         <CardHeader>
@@ -178,4 +210,30 @@ export default async function JobCardPage({
       </Card>
     </div>
   );
+}
+
+/**
+ * A read the drawer can live without.
+ *
+ * Swallows 404 and 403 only. Anything else is a real failure and is allowed to
+ * surface, because a drawer that quietly hid a broken API would have an advisor
+ * telling a customer there is no invoice when there is one.
+ */
+async function optional<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 404 || error.status === 403)) return null;
+    throw error;
+  }
+}
+
+/** Only an owner may release a vehicle with a balance outstanding. */
+async function currentRole(): Promise<string | null> {
+  try {
+    const me = await serverApiFetch('/auth/me', SessionSchema.shape.staff);
+    return me.role;
+  } catch {
+    return null;
+  }
 }

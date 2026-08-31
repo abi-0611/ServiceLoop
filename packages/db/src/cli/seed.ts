@@ -1,4 +1,5 @@
 import { getEnv } from '@serviceloop/config';
+import { sql } from 'drizzle-orm';
 import { createDatabase, type Database } from '../client';
 import { rollbackLastMigration, runMigrations } from '../migrator';
 import { seedDemoShop } from '../seed/seed';
@@ -11,7 +12,37 @@ import { seedDemoShop } from '../seed/seed';
  * `audit_events` is append-only by trigger: a chain cannot be quietly deleted.
  */
 
+/**
+ * Empties every table before the schema is rolled back.
+ *
+ * The phase-2 down migration deliberately refuses to run while an unidentified
+ * or staff-group conversation exists: those rows have no home in the phase-1
+ * shape, and a real operational rollback should stop rather than lose them.
+ * `--reset` is not that — it is "destroy and rebuild", and the rows are going
+ * either way. Clearing first leaves the guard exactly as strict for
+ * `db:rollback`, which is where it matters, while letting a rebuild proceed.
+ *
+ * The append-only trigger on `audit_events` has to come off for the truncate
+ * and goes straight back on. Dev-only: `main` refuses `--reset` in production.
+ */
+async function truncateAllData(db: Database): Promise<void> {
+  await db.execute(sql`
+    alter table audit_events disable trigger audit_events_append_only;
+    alter table estimate_lines disable trigger estimate_lines_immutable_when_accepted;
+    truncate table idempotency_keys, events_outbox, audit_events, shop_config, escalations,
+      declined_work_ledger, merge_suggestions, job_card_drafts, consents, messages,
+      wa_templates, conversations, approval_requests, evidence_bundles, media_assets,
+      estimate_lines, estimates, work_items, job_cards, vehicles, customers, staff, shops
+      restart identity cascade;
+    alter table audit_events enable trigger audit_events_append_only;
+    alter table estimate_lines enable trigger estimate_lines_immutable_when_accepted;
+  `);
+}
+
 async function resetSchema(db: Database): Promise<void> {
+  await truncateAllData(db);
+  console.info('[seed] existing data cleared');
+
   for (let guard = 0; guard < 50; guard += 1) {
     const result = await rollbackLastMigration(db);
     if (result.rolledBack === null) break;

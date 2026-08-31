@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { assemblePrompt, hashPrompt } from './prompt';
-import { ToolRegistry, type PostChecker, type ToolContext } from './tool-registry';
+import { RunState, ToolRegistry, type ToolContext, type ToolInvariant } from './tool-registry';
 
 const CONTEXT: ToolContext = {
   shopId: 'shop-1',
   traceId: 'trace-1',
   actorId: 'agent',
   promptHash: 'abc',
+  runId: 'run-1',
+  conversationId: 'conv-1',
+  customerId: 'cust-1',
+  jobCardId: 'jc-1',
+  language: 'en',
+  state: new RunState(),
 };
 
 const SendMessageArgs = z.object({
@@ -93,7 +99,7 @@ describe('ToolRegistry', () => {
   });
 
   it('lets a post-checker block a completed call', async () => {
-    const anchoring: PostChecker = {
+    const anchoring: ToolInvariant = {
       name: 'claim-anchoring',
       check: ({ args }) => {
         const evidence = (args as { evidenceIds: string[] }).evidenceIds;
@@ -103,7 +109,7 @@ describe('ToolRegistry', () => {
       },
     };
 
-    const registry = registryWithSend().addPostChecker(anchoring);
+    const registry = registryWithSend().addInvariant(anchoring);
 
     const blocked = await registry.invoke(
       'send_customer_message',

@@ -70,6 +70,8 @@ services:
       start_period: 10s
 
   # One-shot bucket bootstrap. Exits 0 once `serviceloop-media` exists.
+  # A container that exits fails `up --wait`, so CI waits on the three
+  # long-running services and runs this one on its own.
   minio-bootstrap:
     image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     container_name: serviceloop-minio-bootstrap

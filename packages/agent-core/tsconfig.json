@@ -6,5 +6,10 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "include": ["src/**/*"],
-  "references": [{ "path": "../shared" }, { "path": "../config" }, { "path": "../domain" }]
+  "references": [
+    { "path": "../shared" },
+    { "path": "../config" },
+    { "path": "../domain" },
+    { "path": "../adapters" }
+  ]
 }

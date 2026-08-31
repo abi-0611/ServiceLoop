@@ -21,9 +21,14 @@
     "db:rollback": "pnpm --filter @serviceloop/db run db:rollback",
     "db:seed": "pnpm --filter @serviceloop/db run db:seed",
     "demo:phase1": "pnpm --filter @serviceloop/simulator run demo:phase1",
+    "demo:phase2": "pnpm --filter @serviceloop/simulator run demo:phase2",
+    "eval:ocr": "pnpm --filter @serviceloop/simulator run eval:ocr",
     "infra:up": "docker compose --project-directory . -f infra/compose.yaml up -d",
     "infra:down": "docker compose --project-directory . -f infra/compose.yaml down",
-    "infra:reset": "docker compose --project-directory . -f infra/compose.yaml down -v"
+    "infra:reset": "docker compose --project-directory . -f infra/compose.yaml down -v",
+    "sim": "pnpm --filter @serviceloop/simulator run sim",
+    "demo:phase3": "pnpm --filter @serviceloop/simulator run demo:phase3",
+    "demo:phase4": "pnpm --filter @serviceloop/simulator run demo:phase4"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

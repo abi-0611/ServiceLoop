@@ -1,3 +1,4 @@
+import { getEnv } from '@serviceloop/config';
 import { SessionSchema } from '@serviceloop/shared';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -8,9 +9,14 @@ import { ApiError, isSignedIn, serverApiFetch } from '@/lib/api';
 
 const MeSchema = SessionSchema.shape.staff.extend({ shops: SessionSchema.shape.shops });
 
-const NAV: ReadonlyArray<{ href: string; label: string }> = [
+const NAV: ReadonlyArray<{ href: string; label: string; demoOnly?: boolean }> = [
   { href: '/board', label: 'Job cards' },
   { href: '/conversations', label: 'Conversations' },
+  { href: '/review', label: 'Review queue' },
+  { href: '/status', label: 'Status signals' },
+  { href: '/intake', label: 'Intake' },
+  { href: '/gate', label: 'Gate' },
+  { href: '/sandbox', label: 'Sandbox', demoOnly: true },
   { href: '/settings/guardrails', label: 'Guardrails' },
 ];
 
@@ -30,6 +36,9 @@ export default async function AppLayout({
   }
 
   const activeShop = me.shops.find((shop) => shop.id === me.shopId);
+  // The simulator can only ever reach a fake WhatsApp; a build wired to the
+  // live adapter should not advertise a link that 404s.
+  const demoMode = getEnv().DEMO_MODE;
 
   return (
     <div className="min-h-dvh">
@@ -42,7 +51,7 @@ export default async function AppLayout({
           <ShopSwitcher shops={me.shops} activeShopId={me.shopId} />
 
           <nav className="order-last flex w-full gap-1 overflow-x-auto sm:order-none sm:w-auto">
-            {NAV.map((item) => (
+            {NAV.filter((item) => item.demoOnly !== true || demoMode).map((item) => (
               <Link
                 key={item.href}
                 href={item.href}

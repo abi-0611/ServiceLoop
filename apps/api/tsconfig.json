@@ -11,6 +11,7 @@
     { "path": "../../packages/shared" },
     { "path": "../../packages/config" },
     { "path": "../../packages/domain" },
+    { "path": "../../packages/agent-core" },
     { "path": "../../packages/adapters" },
     { "path": "../../packages/db" }
   ]

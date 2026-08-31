@@ -1,4 +1,6 @@
-import { canonicalJson, type Result, err, ok } from '@serviceloop/shared';
+import type { LlmToolDefinition } from '@serviceloop/adapters';
+import { zodToJsonSchema } from '@serviceloop/adapters';
+import { canonicalJson, type Language, type Result, err, ok } from '@serviceloop/shared';
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
 
@@ -9,9 +11,11 @@ import type { z } from 'zod';
  * to invoke one, and it validates before the handler ever runs. An agent that
  * hallucinates an argument shape gets a typed rejection, not a partial effect.
  *
- * Phase 3 registers the real customer-facing tools on top of this. What is here
- * now is the invariant every one of them will inherit: validate, execute,
- * post-check, record.
+ * The same zod schema becomes the JSON Schema the model is shown, so the shape
+ * a tool advertises and the shape it accepts cannot drift.
+ *
+ * The invariant every phase-3 tool inherits: validate, execute, post-check,
+ * record.
  */
 
 export interface ToolContext {
@@ -20,6 +24,79 @@ export interface ToolContext {
   readonly actorId: string | null;
   /** Hash of the prompt that produced this call, for the audit record. */
   readonly promptHash: string;
+  /** The run this call belongs to, so every effect is attributable. */
+  readonly runId: string;
+  readonly conversationId: string;
+  readonly customerId: string | null;
+  readonly jobCardId: string | null;
+  readonly language: Language;
+  /**
+   * Per-run scratch space. Candidates composed but not yet sent live here, and
+   * so does the objective's completion signal — the runtime reads it rather
+   * than trusting the model's own account of what it achieved.
+   */
+  readonly state: RunState;
+}
+
+/**
+ * Mutable per-run state the tools share.
+ *
+ * Deliberately small and deliberately not persisted: a candidate that was
+ * composed and never sent is not a fact about the world, and the audit trail
+ * records the compose call itself. What *is* persisted is every send, every
+ * decision and every handoff — through their own services, transactionally.
+ */
+export class RunState {
+  private readonly candidates = new Map<string, unknown>();
+  private readonly notes: string[] = [];
+  private readonly concessions = new Map<
+    string,
+    { readonly lineId: string; readonly description: string; readonly newPaise: number }
+  >();
+  /** Set by any tool that reaches a person: handoff, or an advisor task. */
+  handedOff = false;
+  /** Set by `send_customer_message` when the gate held the draft for HITL. */
+  heldForReview = false;
+
+  putCandidate(id: string, value: unknown): void {
+    this.candidates.set(id, value);
+  }
+
+  candidate(id: string): unknown {
+    return this.candidates.get(id);
+  }
+
+  addNote(note: string): void {
+    this.notes.push(note);
+  }
+
+  /**
+   * A concession `adjust_offer` accepted, and the source id under which the
+   * agent may quote it.
+   *
+   * The guardrail that approved the price *is* the evidence for it. Without
+   * this, an agent that legitimately negotiated a discount could not then state
+   * the number, because the only price on file would be the original — which
+   * would leave it either silent or blocked, and neither is the shop's intent.
+   */
+  recordConcession(input: {
+    readonly lineId: string;
+    readonly description: string;
+    readonly newPaise: number;
+  }): void {
+    this.concessions.set(`line:${input.lineId}@agreed`, input);
+  }
+
+  agreedPrices(): ReadonlyMap<
+    string,
+    { readonly lineId: string; readonly description: string; readonly newPaise: number }
+  > {
+    return this.concessions;
+  }
+
+  allNotes(): readonly string[] {
+    return [...this.notes];
+  }
 }
 
 export type ToolFailure =
@@ -55,11 +132,15 @@ export interface ToolCallRecord {
 }
 
 /**
- * A post-checker inspects a completed call before its result is handed back to
- * the agent. Returning a failure blocks the call — this is where claim
- * anchoring and disclosure enforcement live (phase 3).
+ * A registry-level check that inspects a *completed* call before its result is
+ * handed back to the agent. Returning a failure blocks the call.
+ *
+ * Distinct from `PostChecker` in `post-checker.ts`, which reviews a composed
+ * *message*: this one is a cheap cross-cutting invariant over any tool, that
+ * one is the claim-anchoring machinery L7 demands. Both exist; only one of them
+ * needs a model.
  */
-export interface PostChecker {
+export interface ToolInvariant {
   readonly name: string;
   check(input: {
     readonly tool: string;
@@ -79,7 +160,7 @@ type AnyToolDefinition = ToolDefinition<z.ZodTypeAny, any>;
 
 export class ToolRegistry {
   private readonly tools = new Map<string, AnyToolDefinition>();
-  private readonly postCheckers: PostChecker[] = [];
+  private readonly invariants: ToolInvariant[] = [];
   private readonly calls: ToolCallRecord[] = [];
 
   register<TArgs extends z.ZodTypeAny, TResult>(tool: ToolDefinition<TArgs, TResult>): this {
@@ -90,8 +171,8 @@ export class ToolRegistry {
     return this;
   }
 
-  addPostChecker(checker: PostChecker): this {
-    this.postCheckers.push(checker);
+  addInvariant(invariant: ToolInvariant): this {
+    this.invariants.push(invariant);
     return this;
   }
 
@@ -109,6 +190,29 @@ export class ToolRegistry {
         customerFacing: tool.customerFacing,
       };
     });
+  }
+
+  /**
+   * The tool definitions sent to the model, built from the same zod schemas the
+   * registry validates against.
+   *
+   * `only` narrows the catalogue to an objective's permitted set: an objective
+   * that has no business recording a decision should not be shown a tool that
+   * records one, because the cheapest way to stop a mistake is to make it
+   * unrepresentable.
+   */
+  definitions(only?: readonly string[]): readonly LlmToolDefinition[] {
+    const permitted = only === undefined ? null : new Set(only);
+    return this.names()
+      .filter((name) => permitted === null || permitted.has(name))
+      .map((name) => {
+        const tool = this.tools.get(name) as AnyToolDefinition;
+        return {
+          name: tool.name,
+          description: tool.description,
+          inputSchema: zodToJsonSchema(tool.args),
+        };
+      });
   }
 
   /** Calls recorded so far; the agent runtime writes these to the audit log. */
@@ -157,7 +261,7 @@ export class ToolRegistry {
       return err(failure);
     }
 
-    for (const checker of this.postCheckers) {
+    for (const checker of this.invariants) {
       const verdict = checker.check({ tool: toolName, args: parsed.data, result, context });
       if (!verdict.ok) {
         const failure: ToolFailure = {

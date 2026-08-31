@@ -326,17 +326,27 @@ async function main(): Promise<void> {
         ]),
       );
 
+      // Batch after batch until the table is empty. The step's claim is a
+      // *full* drain, and the backlog is routinely larger than one batch —
+      // running `demo:phase2` first is enough to make it so.
       const dispatched: string[] = [];
-      await uow.transaction(async (tx: Tx) => {
-        const claimed = await outbox.claimPendingBatch(tx, env.OUTBOX_BATCH_SIZE);
-        for (const event of claimed) {
-          const queue = queues.get(queueForEventType(event.envelope.type));
-          assert(queue !== undefined, `no queue registered for ${event.envelope.type}`);
-          await queue?.add(event.envelope.type, event.envelope, { jobId: event.envelope.id });
-          dispatched.push(event.id);
-        }
-        await outbox.markDispatched(tx, dispatched);
-      });
+      for (;;) {
+        const claimedNow = await uow.transaction(async (tx: Tx) => {
+          const claimed = await outbox.claimPendingBatch(tx, env.OUTBOX_BATCH_SIZE);
+          const ids: string[] = [];
+          for (const event of claimed) {
+            const queue = queues.get(queueForEventType(event.envelope.type));
+            assert(queue !== undefined, `no queue registered for ${event.envelope.type}`);
+            await queue?.add(event.envelope.type, event.envelope, { jobId: event.envelope.id });
+            ids.push(event.id);
+          }
+          await outbox.markDispatched(tx, ids);
+          return ids;
+        });
+
+        if (claimedNow.length === 0) break;
+        dispatched.push(...claimedNow);
+      }
 
       dispatchedEventIds = dispatched;
       const after = await outbox.countByStatus();

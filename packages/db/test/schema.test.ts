@@ -6,24 +6,38 @@ import type { Database } from '../src/client';
 import { blindIndex, decryptPii, encryptPii, isEncryptedPii } from '../src/crypto/pii';
 import { StaffRepository } from '../src/repositories/staff-repository';
 import {
+  advisorTasks,
+  agentRuns,
+  agentSteps,
   approvalRequests,
   auditEvents,
   consents,
   conversations,
   customers,
   declinedWorkLedger,
+  deliveryBookings,
   escalations,
   estimateLines,
   estimates,
+  etaEntries,
   eventsOutbox,
   evidenceBundles,
+  gatePasses,
   idempotencyKeys,
+  invoiceLines,
+  invoices,
   jobCards,
+  llmUsage,
   mediaAssets,
+  messageReviews,
   messages,
+  paymentEvents,
+  payments,
   shopConfig,
   shops,
+  silentBayNudges,
   staff,
+  statusSignals,
   vehicles,
   workItems,
 } from '../src/schema';
@@ -174,7 +188,9 @@ describe('schema smoke', () => {
       channel: 'WHATSAPP',
       externalThreadId: '919841000001',
     });
+    const messageId = uuidv7();
     await db.insert(messages).values({
+      id: messageId,
       shopId: SHOP_ID,
       conversationId,
       direction: 'OUTBOUND',
@@ -237,10 +253,196 @@ describe('schema smoke', () => {
     });
     await db.insert(idempotencyKeys).values({ consumer: 'test', eventId: uuidv7() });
 
+    /* Phase 3 — the agent's own record. */
+
+    await db.insert(llmUsage).values({
+      shopId: SHOP_ID,
+      taskClass: 'AGENT',
+      model: 'sandbox-agent',
+      driver: 'sandbox',
+      inputTokens: 120,
+      outputTokens: 30,
+      latencyMs: 40,
+      attempts: 1,
+      // Null cost: an unpriced model meters its tokens and leaves the money
+      // column empty rather than reporting a number derived from a stale rate.
+      costUsdMicros: null,
+      promptHash: 'a'.repeat(64),
+      traceId: 'test',
+    });
+
+    const runId = uuidv7();
+    await db.insert(agentRuns).values({
+      id: runId,
+      shopId: SHOP_ID,
+      objective: 'request_approval',
+      status: 'RUNNING',
+      conversationId,
+      jobCardId: base.jobCardId,
+      customerId: base.customerId,
+      maxSteps: 6,
+      model: 'sandbox-agent',
+      promptContext: { sections: ['constitution'] },
+    });
+    await db.insert(agentSteps).values({
+      shopId: SHOP_ID,
+      runId,
+      stepIndex: 0,
+      promptHash: 'b'.repeat(64),
+      model: 'sandbox-agent',
+      responseText: null,
+      toolCalls: [{ name: 'get_job_card', args: {} }],
+      toolResults: [{ name: 'get_job_card', ok: true, result: {} }],
+      checkerVerdicts: [],
+    });
+    await db.insert(advisorTasks).values({
+      shopId: SHOP_ID,
+      kind: 'CALL_CUSTOMER',
+      urgency: 'HIGH',
+      brief: 'Call Ravi about the brake pads',
+      context: { jobCardId: base.jobCardId },
+      jobCardId: base.jobCardId,
+      conversationId,
+      customerId: base.customerId,
+      dedupeKey: 'escalation:test:2',
+    });
+    await db.insert(messageReviews).values({
+      shopId: SHOP_ID,
+      messageId,
+      conversationId,
+      agentRunId: runId,
+      action: 'APPROVE_SEND',
+      bodyBefore: 'Front brake pads come to ₹3,200.00.',
+      bodyAfter: null,
+      diff: [],
+      checkerReasons: [],
+      waitedMs: 45_000,
+    });
+
+    /* Phase 4 — the middle and the end of the loop. */
+
+    const signalId = uuidv7();
+    await db.insert(statusSignals).values({
+      id: signalId,
+      shopId: SHOP_ID,
+      jobCardId: base.jobCardId,
+      conversationId,
+      senderStaffId: base.staffId,
+      signalType: 'blocked_parts',
+      source: 'VOICE_NOTE',
+      route: 'AUTO_APPLIED',
+      confidence: 9_200,
+      transcript: 'Caliper open irukku, part varum 4 maniku. 4432.',
+      language: 'ta',
+      transcriptConfidence: 8_700,
+      workItemIds: [base.workItemId],
+      matchBasis: 'REGISTRATION',
+    });
+
+    await db.insert(etaEntries).values({
+      shopId: SHOP_ID,
+      jobCardId: base.jobCardId,
+      version: 1,
+      eta: new Date('2026-08-17T11:30:00.000Z'),
+      reason: 'BLOCKED_PARTS',
+      materiality: 'MATERIAL_SLIP',
+      deltaMinutes: 120,
+      detail: 'Waiting on a part; 108 working minutes remaining across 1 approved item(s)',
+      statusSignalId: signalId,
+    });
+
+    await db.insert(silentBayNudges).values({
+      shopId: SHOP_ID,
+      jobCardId: base.jobCardId,
+      windowStart: new Date('2026-08-17T06:00:00.000Z'),
+      state: 'IN_PROGRESS',
+      quietForMinutes: 200,
+      consecutiveWindows: 1,
+    });
+
+    await db.insert(deliveryBookings).values({
+      shopId: SHOP_ID,
+      jobCardId: base.jobCardId,
+      customerId: base.customerId,
+      conversationId,
+      status: 'OFFERED',
+      offeredSlots: ['2026-08-17T11:00:00.000Z'],
+      amountDuePaise: 566_400,
+    });
+
+    const invoiceId = uuidv7();
+    await db.insert(invoices).values({
+      id: invoiceId,
+      shopId: SHOP_ID,
+      jobCardId: base.jobCardId,
+      customerId: base.customerId,
+      number: 'INV/2026-27/0001',
+      status: 'ISSUED',
+      issuedAt: new Date(),
+      subtotalPaise: 245_000,
+      cgstPaise: 22_050,
+      sgstPaise: 22_050,
+      igstPaise: 0,
+      totalPaise: 289_100,
+      sellerName: 'Sri Murugan Auto Works',
+      sellerAddress: ['12 Anna Salai'],
+      intraState: true,
+    });
+    await db.insert(invoiceLines).values({
+      shopId: SHOP_ID,
+      invoiceId,
+      description: 'Front brake pad set',
+      quantityMilli: 1000,
+      unitPricePaise: 245_000,
+      lineTotalPaise: 245_000,
+      cgstPaise: 22_050,
+      sgstPaise: 22_050,
+    });
+
+    const paymentId = uuidv7();
+    await db.insert(payments).values({
+      id: paymentId,
+      shopId: SHOP_ID,
+      jobCardId: base.jobCardId,
+      invoiceId,
+      customerId: base.customerId,
+      provider: 'mock',
+      providerPaymentLinkId: 'plink_mock_smoke',
+      status: 'PENDING',
+      amountPaise: 289_100,
+    });
+    await db.insert(paymentEvents).values({
+      shopId: SHOP_ID,
+      paymentId,
+      kind: 'LINK_CREATED',
+      providerEventId: 'payment_link.created:plink_mock_smoke',
+      amountPaise: 0,
+      runningPaidPaise: 0,
+      occurredAt: new Date(),
+    });
+
+    await db.insert(gatePasses).values({
+      shopId: SHOP_ID,
+      jobCardId: base.jobCardId,
+      customerId: base.customerId,
+      code: 'K7M2QD',
+      tokenHash: 'c'.repeat(64),
+      status: 'ISSUED',
+      expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
+    });
+
+    // Schema v1's 20 tables, plus the three phase 2 adds (`wa_templates`,
+    // `job_card_drafts`, `merge_suggestions`), the five phase 3 adds
+    // (`llm_usage`, `agent_runs`, `agent_steps`, `advisor_tasks`,
+    // `message_reviews`) and the nine phase 4 adds (`status_signals`,
+    // `eta_entries`, `silent_bay_nudges`, `delivery_bookings`, `invoices`,
+    // `invoice_lines`, `payments`, `payment_events`, `gate_passes`). Counting
+    // rather than listing is deliberate — it catches a table added without a
+    // migration being noticed, which is exactly what it did on this phase.
     const tables = await db.execute<{ count: number }>(sql`
       select count(*)::int as count from information_schema.tables where table_schema = 'public'
     `);
-    expect(Number(tables.rows[0]?.count ?? 0)).toBe(20);
+    expect(Number(tables.rows[0]?.count ?? 0)).toBe(37);
   });
 
   it('enforces the per-shop unique registration index', async () => {

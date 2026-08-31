@@ -47,11 +47,16 @@ jobs:
       - name: Domain coverage gate (>= 80%)
         run: pnpm --filter @serviceloop/domain run test:coverage
 
+      - name: Conversation simulator (scripted personas)
+        # No database, no queue, no model: the persona suite is a pure CI
+        # fixture, so it belongs in the fast job and gates every push.
+        run: pnpm sim
+
       - name: Build
         run: pnpm build
 
   integration:
-    name: integration · demo:phase1 · e2e
+    name: integration · demos · e2e
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -69,7 +74,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Start the dev stack
-        run: docker compose --project-directory . -f infra/compose.yaml up -d --wait
+        # `up --wait` fails as soon as any container exits, even with status 0,
+        # so the long-running services are waited on here and the one-shot bucket
+        # bootstrap is run separately, where its exit code is the useful signal.
+        run: |
+          docker compose --project-directory . -f infra/compose.yaml up -d --wait postgres redis minio
+          docker compose --project-directory . -f infra/compose.yaml run --rm minio-bootstrap
 
       - name: Migrate and seed
         run: |
@@ -94,6 +104,15 @@ jobs:
 
       - name: Phase 1 demo
         run: pnpm demo:phase1
+
+      - name: Phase 2 demo
+        run: pnpm demo:phase2
+
+      - name: Phase 3 demo
+        run: pnpm demo:phase3
+
+      - name: Phase 4 demo
+        run: pnpm demo:phase4
 
       - name: Install Playwright browsers
         run: pnpm --filter @serviceloop/console exec playwright install --with-deps chromium

@@ -46,8 +46,54 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE.owner },
     },
     {
+      name: 'channels',
+      testMatch: /sandbox\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE.advisor },
+    },
+    {
       name: 'advisor-mobile',
       testMatch: /board\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Pixel 7'], storageState: STORAGE_STATE.advisor },
+    },
+    {
+      // The review queue runs as OWNER: the graduation report is owner-only, and
+      // the advisor's view of it is asserted inside the spec with its own
+      // context rather than by a second project.
+      name: 'review',
+      testMatch: /review\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE.owner },
+    },
+    {
+      // An advisor clearing the queue between jobs is doing it on a phone.
+      name: 'review-mobile',
+      testMatch: /review\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Pixel 7'], storageState: STORAGE_STATE.owner },
+    },
+    {
+      // Phase 4's surfaces. As an advisor, because that is who reads the ETA
+      // history and clears the confirm queue; the gate screen is deliberately
+      // reachable by every role.
+      name: 'loop',
+      testMatch: /loop\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE.advisor },
+    },
+    {
+      // The gate person is holding a phone at a barrier. If this screen only
+      // worked on a desk it would not work at all.
+      name: 'loop-mobile',
+      testMatch: /loop\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Pixel 7'], storageState: STORAGE_STATE.advisor },
+    },
+    {
+      // The inbox is read on a phone at a counter more often than on a desk.
+      name: 'channels-mobile',
+      testMatch: /sandbox\.spec\.ts/,
       dependencies: ['setup'],
       use: { ...devices['Pixel 7'], storageState: STORAGE_STATE.advisor },
     },

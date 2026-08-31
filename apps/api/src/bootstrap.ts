@@ -17,6 +17,16 @@ export async function createApp(): Promise<NestExpressApplication> {
     logger:
       env.LOG_LEVEL === 'trace' ? ['log', 'error', 'warn', 'debug', 'verbose'] : ['error', 'warn'],
     bodyParser: true,
+    /**
+     * Keeps the untouched request bytes on `request.rawBody`.
+     *
+     * X-Hub-Signature-256 is a digest over exactly what Meta sent. Verifying it
+     * against a re-serialised body would fail on any key reordering or unicode
+     * escaping difference — and the tempting "fix" for that is to stop
+     * verifying, which is how a forged webhook gets to write into a shop's
+     * conversations.
+     */
+    rawBody: true,
   });
 
   app.use(cookieParser());
