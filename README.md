@@ -50,6 +50,8 @@ pnpm lint           # eslint flat config
 pnpm test:unit      # fast, no docker
 pnpm test           # unit + integration (needs docker)
 pnpm demo:phase1    # phase 1 acceptance scenario, exits non-zero on failure
+pnpm demo:phase4    # the whole middle-and-end loop: voice note → invoice → UPI → gate pass
+pnpm sim            # the conversation simulator, seven personas
 
 pnpm db:migrate     # apply migrations
 pnpm db:rollback    # revert the newest migration
