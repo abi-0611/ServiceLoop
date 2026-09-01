@@ -39,6 +39,13 @@ jobs:
     name: deploy ${{ github.event.inputs.environment || 'staging' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # Deploying needs a Workload Identity provider to authenticate against.
+    # Where the repository has no GCP wiring configured, `auth` fails on an
+    # empty input and every merge to main goes red for a reason that has
+    # nothing to do with the commit. Skip instead, on the same reasoning as the
+    # restore drill in `nightly.yml`: a skipped job is honest, and a job that
+    # cannot possibly succeed teaches people to ignore a red X.
+    if: vars.GCP_WIF_PROVIDER != ''
     # A GitHub environment, so production can carry a required reviewer. That
     # approval is the human gate; everything below it is mechanical.
     environment: ${{ github.event.inputs.environment || 'staging' }}
@@ -74,6 +81,7 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy
+        id: deploy
         # Build → migrate → deploy three services → smoke. The script is the
         # same one an operator runs by hand, deliberately: a CI-only deploy path
         # is a path nobody can execute during an incident, which is exactly when
@@ -89,7 +97,13 @@ jobs:
         # smoke failure needs a person to decide whether the fault is the
         # release or the check, and an automatic rollback would destroy the
         # evidence either way. The runbook covers it.
-        if: failure() && (github.event.inputs.environment || 'staging') == 'staging'
+        #
+        # Conditioned on the deploy step's own outcome rather than on bare
+        # `failure()`: a job that fell over in checkout, auth, or typecheck
+        # never reached Cloud Run, and rolling back then would retire the
+        # revision currently serving staging to undo a deploy that never
+        # happened.
+        if: failure() && steps.deploy.outcome == 'failure' && (github.event.inputs.environment || 'staging') == 'staging'
         run: infra/deploy/rollback.sh staging
 
       - name: Summary
