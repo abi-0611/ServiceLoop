@@ -14,6 +14,7 @@ export const PORTS = [
   'whatsapp',
   'telephony',
   'speech',
+  'speech-stream',
   'payments',
 ] as const;
 export type PortName = (typeof PORTS)[number];
@@ -211,26 +212,79 @@ export function selectAdapters(env: Env): readonly AdapterSelection[] {
           implemented: true,
         };
 
-  const laterPhases: Array<[PortName, string, string]> = [
-    ['telephony', 'ExotelTelephony', 'phase 5 — voice'],
-  ];
+  /**
+   * Telephony (phase 5.1).
+   *
+   * DEMO_MODE forces the browser loopback for the same reason it forces the
+   * WhatsApp sandbox: a developer with an Exotel token in their shell must not
+   * be able to ring a real customer by clicking a button in the console. The
+   * loopback is a complete adapter — the same PCM frame interface, the same
+   * typed call events, the same recording lifecycle — so a flow that works
+   * against it is a flow that works against Exotel.
+   */
+  const telephony: AdapterSelection =
+    demo || env.TELEPHONY_DRIVER === 'loopback'
+      ? {
+          port: 'telephony',
+          adapter: 'BrowserLoopbackTelephonyAdapter',
+          sandbox: true,
+          reason: demo
+            ? 'DEMO_MODE forces the browser softphone; no telco account is involved'
+            : `TELEPHONY_DRIVER=${env.TELEPHONY_DRIVER}`,
+          implemented: true,
+        }
+      : env.TELEPHONY_DRIVER === 'exotel'
+        ? {
+            port: 'telephony',
+            adapter: `ExotelTelephonyAdapter(${env.EXOTEL_SUBDOMAIN})`,
+            sandbox: false,
+            reason: 'TELEPHONY_DRIVER=exotel with account sid, key and flow app id present',
+            implemented: true,
+          }
+        : {
+            port: 'telephony',
+            adapter: 'TwilioTelephonyAdapter',
+            sandbox: false,
+            reason: 'TELEPHONY_DRIVER=twilio with account sid and auth token present',
+            implemented: true,
+          };
 
-  return [
-    storage,
-    notifier,
-    llm,
-    ocr,
-    whatsapp,
-    speech,
-    payments,
-    ...laterPhases.map(([port, adapter, reason]) => ({
-      port,
-      adapter,
-      sandbox: demo,
-      reason: `not wired yet (${reason})`,
-      implemented: false,
-    })),
-  ];
+  /**
+   * The streaming half of the speech port (phase 5.2).
+   *
+   * It gets its own line rather than sharing the batch one, because the two can
+   * legitimately differ: a shop can transcribe voice notes with Google in batch
+   * and stream live calls through Sarvam, and an operator debugging a call that
+   * went deaf needs to know which of the two was answering.
+   */
+  const speechStream: AdapterSelection =
+    demo || env.SPEECH_STREAM_DRIVER === 'mock'
+      ? {
+          port: 'speech-stream',
+          adapter: 'MockStreamingSpeechAdapter',
+          sandbox: true,
+          reason: demo
+            ? 'DEMO_MODE forces the scripted streaming recogniser and synthesiser'
+            : `SPEECH_STREAM_DRIVER=${env.SPEECH_STREAM_DRIVER}`,
+          implemented: true,
+        }
+      : env.SPEECH_STREAM_DRIVER === 'sarvam'
+        ? {
+            port: 'speech-stream',
+            adapter: `SarvamStreamingAdapter(${env.SARVAM_STREAM_STT_MODEL} / ${env.SARVAM_TTS_MODEL})`,
+            sandbox: false,
+            reason: 'SPEECH_STREAM_DRIVER=sarvam with SARVAM_API_KEY present',
+            implemented: true,
+          }
+        : {
+            port: 'speech-stream',
+            adapter: `GoogleStreamingSpeechAdapter(${env.GOOGLE_SPEECH_MODEL})`,
+            sandbox: false,
+            reason: 'SPEECH_STREAM_DRIVER=google with a streaming recognizer configured',
+            implemented: true,
+          };
+
+  return [storage, notifier, llm, ocr, whatsapp, speech, speechStream, telephony, payments];
 }
 
 /**

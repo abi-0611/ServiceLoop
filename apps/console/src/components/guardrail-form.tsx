@@ -71,6 +71,17 @@ export function GuardrailForm({
         maxOutboundPerCustomerPerWeek: Number(form.get('frequencyCaps.perWeek')),
         minMinutesBetweenMessages: Number(form.get('frequencyCaps.minMinutes')),
       },
+      voice: {
+        enabled: form.get('voice.enabled') === 'on',
+        // Sent whole rather than as three independent switches: the schema
+        // refuses outbound or inbound without `enabled`, and a patch that set
+        // one without the other would be rejected as a validation error the
+        // owner did not cause.
+        outboundEnabled: form.get('voice.enabled') === 'on' && form.get('voice.outbound') === 'on',
+        inboundEnabled: form.get('voice.enabled') === 'on' && form.get('voice.inbound') === 'on',
+        dailyCostCapPaise: Number(form.get('voice.dailyCostCapPaise')),
+        maxOutboundCallsPerDay: Number(form.get('voice.maxOutboundCallsPerDay')),
+      },
     };
 
     try {
@@ -240,6 +251,74 @@ export function GuardrailForm({
                 </option>
               ))}
             </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Voice</CardTitle>
+          <CardDescription>
+            A shop starts with voice off. Switching it on lets the approval ladder ring a customer
+            instead of raising a task for an advisor — every other guardrail still applies, and a
+            call is refused in quiet hours where a message would only have been deferred.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              name="voice.enabled"
+              data-testid="voice-enabled"
+              defaultChecked={config.voice.enabled}
+              disabled={!editable}
+              className="h-4 w-4"
+            />
+            Let the agent use the telephone
+          </label>
+
+          <div className="flex flex-wrap gap-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="voice.outbound"
+                data-testid="voice-outbound"
+                defaultChecked={config.voice.outboundEnabled}
+                disabled={!editable}
+                className="h-4 w-4"
+              />
+              Call customers about approvals
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="voice.inbound"
+                data-testid="voice-inbound"
+                defaultChecked={config.voice.inboundEnabled}
+                disabled={!editable}
+                className="h-4 w-4"
+              />
+              Answer the published line
+            </label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Daily voice budget (paise)"
+              name="voice.dailyCostCapPaise"
+              type="number"
+              defaultValue={config.voice.dailyCostCapPaise}
+              editable={editable}
+              errors={errors}
+            />
+            <Field
+              label="Max calls / day"
+              name="voice.maxOutboundCallsPerDay"
+              type="number"
+              defaultValue={config.voice.maxOutboundCallsPerDay}
+              editable={editable}
+              errors={errors}
+            />
           </div>
         </CardContent>
       </Card>

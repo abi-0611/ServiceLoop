@@ -56,6 +56,7 @@ export class PgWorkItemStore implements WorkItemStore<Tx> {
       kind: 'DECLINED' | 'DEFERRED';
       reason: string;
       followUpAfter: Date | null;
+      at: Date;
     },
   ): Promise<void> {
     const [card] = await tx
@@ -84,6 +85,10 @@ export class PgWorkItemStore implements WorkItemStore<Tx> {
         amountPaise: Number(amount?.total ?? 0),
         followUpAfter: input.followUpAfter,
         status: 'OPEN',
+        // The transition's own instant, not the database's. `created_at` on this
+        // row is the "declined at" a re-pitch quotes months later.
+        createdAt: input.at,
+        updatedAt: input.at,
       })
       .onConflictDoNothing({ target: declinedWorkLedger.workItemId });
   }

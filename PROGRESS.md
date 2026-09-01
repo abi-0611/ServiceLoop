@@ -1853,3 +1853,607 @@ Verified on a freshly reset seed: `pnpm typecheck`, `pnpm lint`, `pnpm test` (16
     re-engagement template per language, which is a Meta approval rather than a code change, so it
     is recorded rather than faked. `messaging.templates.reengagement` is where it would be
     configured, and it defaults to null.
+
+---
+
+## Phase 5 — Voice layer
+
+**Status: COMPLETE.** The agent has a phone voice. An approval rung rings the customer instead of
+raising a task for somebody, the caller hears the AI disclosure and the recording notice before
+anything else, approves on the keypad, has the decision read back, confirms it, and the job card
+moves — then the WhatsApp summary lands. A customer who rings the shop is answered from live state
+and reaches a person on `0`, with the advisor whispered an eight-second summary before the legs
+join. All of it developed, tested and demonstrated through a browser softphone, with no telco
+account in existence.
+
+`pnpm demo:phase5` walks one outbound and one inbound call in 9/9 steps against the real database.
+`pnpm sim:voice` runs 5/5 voice personas — whole telephone calls, in CI, with no credentials.
+1283 unit tests across 16 packages, `pnpm typecheck` and `pnpm lint` clean, domain coverage 88.4%
+against the 80% gate, migration 0005 with no drift.
+
+The starting point for this phase was substantial: the ports, adapters, streaming speech, voice
+runtime, domain services, schema and migration had already been written. What follows separates
+what was found from what was added, because the difference matters for reading the diff.
+
+### `[5.0] FOUND — the layer below the runtime`
+`TelephonyPort` with `BrowserLoopbackTelephonyAdapter`, `ExotelTelephonyAdapter` and
+`TwilioTelephonyAdapter`; `StreamingSpeechPort` with Sarvam, Google and mock adapters;
+`VoiceTurnManager`; `VoiceAgentRunner`; the domain's call gate, cost meter, keypad policy and
+scripts; `packages/db`'s four tables and migration 0005; the shop-config `voice` block and the
+phase-5 environment schema. All of it typechecked and none of it reachable: `agent-core/src/index.ts`
+did not export `./voice/*`, there were no voice tests, no simulator personas, no demo, no API
+surface and no console page.
+
+### `[5.1] DONE — the softphone is now a page, and the loopback is now honest`
+The console's `/softphone` is the far end of a telephone call: pick a customer, ring in or be rung,
+answer, speak, press a key, talk over the agent, hang up. Audio really is PCM — the words typed
+into the say box are encoded *into* the frames and decoded back out by the recogniser, so nothing
+on the page takes a shortcut the telephone would not allow — and the browser plays it through
+`AudioContext` rather than only printing it.
+
+Three fixes to the adapter beneath it, each found by making something use it:
+
+- **The playback clock leaked between utterances.** `play()` reset `playbackStartedAt` when the
+  line had finished but never reset `queuedMs`, so a two-second sentence after a six-second one
+  reported eight seconds still to hear. Every turn after the first held the barge-in watch open for
+  the sum of everything the agent had ever said.
+- **`LoopbackHandset` could not tell whether the agent was still talking.** Added `remainingMs()`,
+  `isAnswered()` and `isEnded()`. Queue length will not do: a handset buffers ahead, so an empty
+  queue means "nothing left to fetch", not "the customer has stopped listening".
+- **A call row and its line are two different identifiers.** `markRinging` now records the
+  provider's own id, which is the hop the console, a status webhook and a recording callback all
+  have to make. Without it the console could not find the line for a call it had just placed.
+
+New: `ScriptedCaller` in `packages/adapters/src/voice/`. The voice runtime blocks — it speaks, then
+waits — so a call cannot be driven by calling methods in order; it needs a *second concurrent
+party*. That is what this is, and it is the same object the unit tests, the persona suite and the
+demo all use, so a persona proven in CI is the persona the demo plays back.
+
+`VOICE_LOOPBACK_PLAYBACK_SPEED` (default 1) runs the modelled line faster than real time. One is
+the only honest setting for a demo somebody is listening to; CI turns it up so a nine-turn call
+runs in under a second, which changes no behaviour under test.
+
+### `[5.3] DONE — three bugs the first real call found`
+Writing tests that hold a line open surfaced four defects in the runtime, none of which a typecheck
+could have caught:
+
+1. **Silence was treated as a good turn.** `isPoorTurn` returned false for a null confidence — the
+   right answer for a keypress, the wrong one for a caller who said nothing — so a silent turn went
+   to the agent with an empty utterance, and the `voice.no_input` branch below it was unreachable.
+   It now takes the input mode: `DTMF` is never poor, `NONE` always is.
+2. **Barge-ins on script segments were not counted.** The counter lived at the agent-turn call site,
+   but a caller interrupts *sentences*, and the sentence they cut across is as often the evidence
+   recap as something the model wrote. Moved into `say`, where the cut is actually observed.
+3. **A confirmed readback went back to the microphone.** After the caller said yes, the loop
+   returned to `listen()` and waited for them to say something else — so the customer heard silence,
+   then "sorry, I did not catch that". The loop now re-plans immediately on a confirmation.
+4. **A run that recorded a decision and said nothing was answered with an apology.** The
+   empty-queue branch fired before the decision was checked, so the agent apologised for a yes it
+   had heard.
+
+### `[5.4a] DONE` — the VOICE_OR_ADVISOR rung rings somebody
+`EscalationLadderEngine` takes an optional `VoiceCallPlacer`, and `createVoiceRuntime` attaches
+`VoiceAgentRunner` to it. Four endings, in order: a decision closes the ladder; a ring-out defers
+the rung once and rings again; a call that ended with a person raises nothing further; anything
+else falls back to the phase-3 advisor task. A refusal the gate marked *not* falling back —
+a customer who revoked consent — stops instead, because tasking a person to ring somebody who asked
+not to be rung is the same violation with an extra step.
+
+The retry is counted from the call rows (`CallStore.countForEscalation`), not from a flag: a
+deferred rung keeps its id and its row, and "we rang once and nobody answered" is a fact about a
+telephone call. Blocked rows do not count, so a refused attempt does not spend the retry.
+
+Wired in **both** the API and the workers process. The API can place a call somebody clicked for;
+the ladder's own rungs fire on the escalation worker. A deployment with voice in the API alone
+would have a softphone that worked and a ladder that never rang anybody.
+
+### `[5.4a] DONE — a decision taken on the keypad moves the job card`
+The keypad path never reached `ApprovalService`: pressing 1 wrote a call row and nothing else, so
+the work items stayed `PENDING_APPROVAL` and the ladder was never cancelled. `recordKeypadDecision`
+now calls the same service the chat path decides through, with `decidedVia: 'voice_keypad'` — the
+one fact that should differ. A write that fails does not lose the answer: the customer said yes on
+a recorded line, so the fallback is an advisor task holding their decision.
+
+The outbound call's agent runs now use `resolve_partial_approval` rather than `request_approval`.
+The *call* is a `request_approval` — that is what it is for, and it is what the row says — but the
+asking is done by the script, in the shop's own recorded words, before the model is consulted.
+Every turn after that is the customer replying to an approval request, which is the objective whose
+toolset contains `record_customer_decision`. With the call's own objective, a customer who said yes
+on the phone was told an advisor would call them back.
+
+### `[5.5] DONE — declining is read back too`
+The voice persona suite found this on its first green run: `1` was read back and confirmed, while
+`3` and `4` recorded a decision on a single press. `requireReadbackBeforeDecision` is a literal
+`true` in the schema precisely so that no reading of "which decisions matter" can switch it off for
+some of them — and a misdialled 3 loses the shop the job and sends a car out with the fault it came
+in with. All three now compose a readback and wait for a second press, and the readback's *words*
+differ by decision (`voice.readback.decline`, `voice.readback.defer`, in all three languages),
+because reading "so I'll go ahead with the brake pads" back to somebody who just declined would be
+worse than saying nothing. All three are filed under the `voice.readback` script key, so one query
+over a transcript answers "was this decision read back?" whatever it was.
+
+### `[5.8] DONE — the voice simulation suite`
+`pnpm sim:voice`: five personas, each a whole telephone call. `voice_quick_approver` (Tamil,
+keypad only, no model consulted at any point), `voice_price_objector` (Hindi-English, talks over
+the evidence recap and then agrees), `voice_dtmf_elder` (says nothing at all and finishes on the
+keypad), `voice_noisy_line` (two unintelligible turns, drops to IVR, declines) and
+`voice_inbound_handoff` (rings the shop and presses 0).
+
+Every call is judged twice — on what its persona was for, and on four properties of *every* call,
+checked in the runner rather than in the personas because a property four fixtures happen to
+satisfy is not a guarantee: the disclosure was the first thing in the persisted transcript and
+marked mandatory; a recorded decision has a readback turn before it and an answer after it; the
+latency markers the pipeline itself logged stayed inside the budget; a `call_usage` row was
+written. Required in CI, in the fast job, with no database and no credentials.
+
+To make the latency assertion mean anything, the voice test world's clock runs at real speed from a
+fixed *date*. Every other harness in this codebase freezes time, and for a phone call that would be
+wrong twice over: every stage marker would read zero and the per-call time cap could never be
+reached. Durations are real; "what time of day is it" is not, so quiet hours and working hours are
+still evaluated against a Thursday afternoon.
+
+### `[5.1/5.4c] DONE — the API's voice surface`
+`VoiceModule` builds one `TelephonyPort` for the process, chosen by `selectAdapters`, and the
+controllers above it cannot tell which they have. `SoftphoneController` serves the handset —
+state, originate, inbound, answer, speak, poll, hangup, no-answer — against the `Softphone*`
+contracts that were already written in `packages/shared`. Every endpoint refuses with `CONFLICT`
+behind a live adapter: a softphone that could pick up a real customer's call would be a way to
+eavesdrop. `CallsController` serves the call list and the screen-pop: the whispered summary, the
+transcript with its ⚿ marks, and the job card loaded through the same reader the agent used, so an
+advisor and an agent cannot disagree about the estimate in front of a customer.
+
+Origination returns as soon as the *line* exists rather than when the call ends — the browser has
+to be able to answer it — and both endpoints poll for the call row rather than reading it once,
+because the adapter connects the leg before the runtime writes the provider's id onto the row. A
+single read a millisecond early fell through to awaiting the whole call, which is a request that
+hangs for as long as the conversation lasts.
+
+### `[5.6/5.7] DONE — the brakes, proven`
+`packages/domain/src/voice/voice.test.ts`: 49 tests over the gate, the meter, the keypad and the
+scripts, none of which needs a telephone. The kill switch above the shop's own settings and checked
+first; a revoked customer refused with `fallBackToAdvisor: false`; quiet hours refusing an outbound
+call while still answering an inbound one; the caps alerting before they halt; the day measured in
+the shop's own timezone. `VoiceCallService` writing a `BLOCKED` row rather than nothing, refusing to
+persist a recording for a call whose notice was never played, appending a transcript a retry cannot
+duplicate, and metering a call that nobody answered.
+
+`packages/agent-core/src/voice/voice.test.ts`: 26 tests running whole calls against a modelled
+line, including the recording that contains none of the two ⚿ segments' audio, the barge-in that
+cuts a sentence and the two that can never be cut, and the keypad completing an approval end to end.
+
+### Files
+`packages/adapters/src/voice/scripted-caller.ts`, `packages/adapters/src/llm/{deterministic-judge,deferred-adapter}.ts`,
+`packages/domain/src/{voice/voice.test.ts,testing/in-memory-voice.ts}`,
+`packages/agent-core/src/{voice/composition.ts,voice/voice.test.ts,testing/voice-world.ts}` (+ the
+`./testing` subpath), `packages/simulator/src/{voice/,cli/sim-voice.ts,scenarios/phase5-demo.ts}`,
+`apps/api/src/voice/`, `apps/console/src/{components/softphone.tsx,app/(app)/softphone/}`,
+`apps/console/test/e2e/softphone.spec.ts`, `apps/workers/src/main.ts`, `.env.example`,
+`.github/workflows/ci.yml`.
+
+## Phase 5 Acceptance Gate — current state
+
+- [x] **Browser softphone demo: outbound approval call — disclosure ⚿ heard, evidence recap,
+      objection handled, DTMF `1` approves, job card updates, WhatsApp summary lands. All without
+      any telco credentials.** `demo:phase5` steps 05–07, against the real database: the two ⚿
+      segments, the context, the recap, the ask and the keypad hint, then `1`, the readback, `1`
+      again — decision `FULL`, both work items `APPROVED`, summary sent, ₹0.42 metered. The
+      objection path is `voice_price_objector` in `sim:voice`, which barges in over the price and
+      then agrees. The console page does the same thing by clicking, proven end-to-end in Chromium
+      by `apps/console/test/e2e/softphone.spec.ts`.
+- [x] **Inbound "car ready-aa?" call answered from live state; frustration fixture warm-bridges
+      with whisper summary + screen-pop.** `demo:phase5` step 08 and the `voice_inbound_handoff`
+      persona; the screen-pop is asserted in the browser and in `apps/api/test/api.test.ts`.
+- [x] **Barge-in, readback-confirm, latency budget, and no-dead-air proven by tests.**
+      `packages/agent-core/src/voice/voice.test.ts` — the cut, the two segments that may never be
+      cut, the readback that a non-answer spends without recording anything, and the no-input path
+      that answers rather than leaving the line silent. The latency budget is asserted per turn from
+      the pipeline's own stage markers by every persona in `sim:voice`.
+- [x] **Consent/recording ordering enforced; revoked-consent calls impossible; kill switch
+      verified.** The ordering in three places — the runtime, `mayStartRecording`, and a CHECK
+      constraint in migration 0005 — and asserted on the *bytes*: the stored WAV contains none of
+      the mandatory segments' audio. Revoked consent is refused before the number is decrypted, with
+      a `BLOCKED` row and an audit entry, and does not fall back to tasking a person. The kill
+      switch is flipped mid-run in `demo:phase5` step 09.
+- [x] **Voice sim suite green in CI; cost metering rows written per call.** `pnpm sim:voice`, 5/5,
+      in the fast job. Every persona asserts its own `call_usage` row.
+- [x] **`pnpm demo:phase5` orchestrates one outbound + one inbound loopback call end-to-end.** 9/9,
+      re-runnable.
+- [ ] **Tag `phase-5-complete`.** Ready to create — every checkbox above passes. Not created,
+      because a git tag is the user's call rather than something to do unasked.
+
+## Decisions & deviations — Phase 5
+
+78. **The softphone's audio moves over HTTP, not a media-stream WebSocket.** The phase file asks for
+    "WebRTC/WebSocket audio between browser mic/speaker and the same PCM frames interface". The port
+    boundary is PCM frames either way, so nothing above `BrowserLoopbackTelephonyAdapter` can tell
+    the difference — and a socket server whose only user is a demo page is a socket server CI has to
+    keep alive. The page posts caller audio and pulls agent audio; the poll returns the PCM the line
+    actually delivered, and the browser plays it. Revisit if a developer ever needs to hear the
+    agent's *timing* rather than its words, which is the one thing polling flattens.
+79. **The browser speaks by naming words, not by uploading a microphone — but the port cannot tell.**
+    `MockStreamingSpeechAdapter` encodes each phrase into the audio it produces and decodes it back
+    out, so the softphone produces real frames the recogniser really reads. `audioBase64` accepts a
+    live browser recording on the same endpoint, and the mock reports it unintelligible unless it
+    was registered as a fixture — which is the honest outcome, and how the 5.5 degradation path is
+    reached from a real microphone.
+80. **A voice test world's clock ticks.** Every other harness here freezes time. A frozen clock
+    makes every latency marker read zero and the per-call time cap unreachable, so the voice world
+    runs at real speed from a fixed date: durations are real, the calendar position is not. The
+    modelled *line* is then sped up separately, which is a different knob and a different lie — it
+    shortens the wait for audio already queued without changing a single behaviour under test.
+81. **`demo:phase5` runs against Postgres; `sim:voice` does not.** The voice runtime has an
+    in-memory suite of its own, so what the demo uniquely exercises is the phase-5 Postgres
+    stores — `calls`, `call_turns`, `call_consent_events`, `call_usage` — which every other test
+    replaces with a double. The same split phase 3 made, for the same reason.
+82. **The deterministic claim judge moved from the simulator into `@serviceloop/adapters`.** Four
+    things now need it — the persona suite, the phase-3 and phase-4 demos, the voice tests and
+    `sim:voice` — and a judge that differs between the suite proving a flow and the demo showing it
+    is a judge proving nothing. Without it the checker fails closed, which is correct and makes a
+    credential-free world one where the agent may never say anything.
+83. **The call's objective and its agent runs' objective are different, on purpose.** A row that
+    said `resolve_partial_approval` would misdescribe why the shop rang; a run that used
+    `request_approval` cannot record a decision. Both are now stated separately, and the comment on
+    `placeAndRun` says why.
+84. **`VoiceCallState` carries the shop's voice settings for the duration of a call.** A tool runs
+    inside a call and has no transaction of its own to load a document with — and a sentence limit
+    that changed halfway through a phone call would be a stranger thing than one fixed for its
+    duration.
+85. **The escalation ladder is given its telephone after construction.** A constructor argument
+    would be a cycle: the voice runtime is built *from* the runtime whose ladder it attaches to,
+    because it reuses the same tools, checker and approval service. `attachVoice` makes that
+    ordering visible in one place — the composition root — instead of a rule somebody has to
+    remember.
+
+## OPEN QUESTIONS — Phase 5
+
+22. **A live-model / live-speech nightly mode is not implemented.** The phase asks for one,
+    report-only. It is deliberately absent rather than stubbed, for the reason phase 3 recorded
+    about its own nightly suite: a harness nobody has ever run against a model is a claim, not a
+    capability. Everything it would need is in place — `SarvamStreamingAdapter` and
+    `GoogleStreamingSpeechAdapter` implement the same port the mock does, and `sim:voice` takes a
+    persona name — so wiring it is a credential and a cron entry, not a design.
+23. **A booking taken on the inbound line drafts nothing yet.** `INBOUND_DTMF` offers `3` for
+    booking and the catalogue has the prompts in all three languages, but the handler falls through
+    to "I did not catch that". The phase asks for an appointment draft the advisor confirms;
+    `DeliveryService` already has the slot machinery, and the missing piece is a call-site that
+    turns a spoken time into a `delivery_bookings` draft. Left undone rather than half-done: a
+    booking that is taken and then silently dropped is worse than one the customer was told to
+    arrange with a person.
+24. **Objection handling on a call reuses phase 3's intents but has no voice-specific evidence
+    re-send.** "Re-send the media" is a sensible answer in a thread and meaningless on a telephone.
+    The agent currently answers from the bundle in words, which is right, but the objective's
+    instructions still tell it to re-send a photo. Worth a voice-specific paragraph in
+    `voiceObjectiveSpec` the next time the objection copy is touched.
+25. **`framesBeforeNotice` is reported as a constant zero on the API's call DTO.** The recorder
+    counts what it deliberately left out, and the loopback session has the number, but it is not
+    persisted — so a call read back an hour later cannot show it. The assertion that matters is
+    made where it can be made honestly (over the stored WAV, in the tests); the console shows a
+    zero that is true rather than measured. A column on `calls` would fix it.
+26. **The whisper is composed but its length is not enforced.** The phase asks for "a whispered
+    8-second summary". `whisperText` produces one sentence, which is about right at a normal
+    speaking rate, but nothing checks it — a long vehicle label and a long reason could push it past
+    ten seconds while the customer waits. A `trimToSpokenTurn` at the call site would do it.
+
+---
+
+## Phase 6 — Retention engine, owner digest & analytics
+
+**Status: COMPLETE.** The loop that starts after the vehicle has left now runs. A brake pad
+deferred at April's service is ledgered with the technician's own words, raised again when the
+rains arrive in a message that quotes that April visit and honours the price the customer was
+quoted, booked with one tap, done on a second card — and the money appears in "₹ recovered from
+previously declined work" in that evening's owner digest, where every number can be independently
+recomputed from the event log.
+
+`pnpm demo:phase6` walks that whole arc in 15/15 steps against the real database, on a fake clock
+running April → July. `pnpm metrics:recompute --from … --to …` re-derives 122 shop-days and exits
+non-zero if a single stored number moved; it is a CI step. 700 domain tests (87.3% statements,
+76.9% branches against the 80/75 gate), 48 API integration tests, 61 Playwright tests across
+desktop and mobile, 91 db and 13 workers integration tests, `pnpm typecheck` and `pnpm lint`
+clean.
+
+As in phase 5, the starting point was substantial and the difference matters for reading the diff.
+
+### `[6.0] FOUND — the whole domain layer, and nothing reachable`
+`packages/domain/src/retention/` already held the ledger service, the trigger engine, the re-pitch
+composer, the feedback service, the reminder service, the MARKETING consent machinery, the digest
+service, the alert service and the event-sourced metrics fold — 4,700 lines with 54 tests, all
+green. `packages/db` had the ten tables, migration 0006 and every Pg store. `packages/config` had
+the five shop-config sections with sensible conservative defaults. `packages/agent-core` had the
+composition root. `apps/workers` had the four event handlers and the four sentinels.
+
+None of it ran. `apps/workers/src/main.ts` imported neither the handlers nor the sentinels, so no
+timer fired and no event was consumed. The API had no phase-6 module, so nothing could be read.
+`packages/shared/contracts.ts` had no phase-6 DTOs, so nothing could be typed across the wire. The
+console had no Analytics page. The five one-tap action ids in `messaging/retention-actions.ts` were
+parsed by nothing, so a customer tapping "Not interested" would have fallen through to the intake
+pipeline and opened a job card. There was no `demo:phase6` and no recompute command.
+
+What follows is what was added.
+
+### `[6.2/6.3] DONE — the five taps now do something, and cannot do the wrong thing`
+`RetentionReplyPort` (`messaging/ports.ts`) is the phase-6 half of the tap surface, sitting beside
+`ApprovalReplyPort` and `SlotReplyPort` for the same dependency reason: the retention module
+imports `OutboundGate` from messaging, so a value import back the other way would close a cycle.
+`InboundHandler.handleInteractiveReply` checks all five ids **before** `parseDraftAction`, and that
+ordering is the point — a recognised retention id reaching the intake fall-through is a
+"Not interested" that opens a job card.
+
+`applyRetentionTap` is one helper rather than five copies, because five copies is how four of them
+end up with a slightly different failure message and the fifth with none. No reply is composed
+there: every service acknowledges through the gate itself, because "we will raise it again in about
+a month" is only true if the ledger item actually took the deferral.
+
+The implementation is assembled in `createRetentionRuntime` and exposed as `runtime.replies`, so
+the process that *receives* a tap and the process that *sent* the message carrying it cannot
+disagree about what a button id means.
+
+### `[6.4] DONE — the sentence after the face`
+A customer who taps 😞 and then types (or speaks) why is answering the same question. That message
+is now attached to the same feedback record rather than becoming a draft job card, and the advisor's
+recovery task carries their words. A voice note is transcribed through a *new, narrower* port —
+`transcribeVoiceNote` — rather than through `TechnicianNotePort`, which is staff-only by design and
+must stay that way: a customer's voice note must never be readable as an instruction to move a job
+card. A recogniser outage still records the comment with its audio reference and says so on the
+trace.
+
+### `[6.2] DONE — the odometer ask, and the number that comes back`
+The odometer trigger may only fire on a reading the customer volunteered, and nothing was asking.
+`composeRepitch` now takes `askOdometer` and appends the catalogue's own sentence — a sentence in
+the body rather than a fourth button, because WhatsApp allows three and the three that exist are the
+answer to the question the message is actually about. It rides on a re-pitch and is never a message
+of its own, which is what the phase asks for.
+
+It asks only when nothing has told us the mileage *since the decline*, which is exactly the reading
+the trigger is missing: `kmSince` needs a now and a then, and the then is already on the ledger row.
+
+`parseBareOdometer` reads the answer, and its most important rule is a refusal: **a bare four-digit
+number is not a mileage.** Anything under 10,000 is ambiguous with the last four digits of a
+registration, which is how a great many of this product's users refer to their car, and "4432" filed
+as a reading would put 4,432 km on somebody's Swift and then silently suppress that vehicle's
+odometer trigger for ever — because the trigger measures distance *since* the reading it holds. With
+a unit ("4432 km") it is a person answering a question and is accepted. Two further guards live in
+`tryRecordVolunteeredOdometer`: a retention touch must have reached that customer inside a fortnight,
+and the customer must have exactly one vehicle with open ledger work, because a reading filed against
+the wrong car is worse than no reading.
+
+`RetentionService.recordOdometer` takes the source explicitly, and the source is load-bearing rather
+than descriptive: `CONSOLE` and `INTAKE` readings improve the service-due forecast and appear in
+history, and can never on their own cause the shop to write to somebody.
+
+### `[6.7] DONE — "I'll call" now claims something`
+`DIGEST_ACTION_IDS.claim` was composed onto every digest and handled by nothing. `DigestService.claim`
+raises a `CALL_CUSTOMER` task against the owner's own name (deduped on the approval, so a second
+press raises nothing new) and resolves the `approval_stuck` incident, so the 6.8 alert stream stops
+raising something a person is now holding. The alert service is *injected* as `resolveAlert`, the
+same shape the feedback service's alerter has, so 6.7 does not depend on 6.8 — it depends on
+"something that can be told an incident has an owner now".
+
+What it deliberately does **not** do is remove the approval from tomorrow's pending list, and the
+`digest.claimed_ack` copy was rewritten in all three languages to stop claiming it does. That list is
+folded from the event log — requested, never decided — and an approval nobody has answered is still
+an approval nobody has answered, whoever promised to ring about it. A claim that quietly emptied the
+line would be the exact failure the brief exists to prevent: a customer waiting three days on a
+decision that stopped being visible to anyone the evening somebody meant well. There is a test named
+after that property.
+
+### `[6.1–6.10] DONE — the workers process actually runs the phase`
+`apps/workers/src/main.ts` now builds the retention runtime from `createRetentionWiring`, registers
+the four event handlers on the outbox consumer, and starts four sentinels — `RetentionScanner`,
+`FeedbackSentinel`, `StuckApprovalSentinel` and `DigestScheduler` — each on its own interval, because
+they answer to four different clocks: a horizon in weeks, a delivery a day or two ago, an owner
+waiting right now, and the shop's own wall clock. Five new environment variables carry the intervals.
+`agent.tasks` is shared rather than rebuilt: a recovery task from a bad review and an approval task
+from a stuck ladder are the same queue in front of the same advisor.
+
+### `[6.9] DONE — the API's analytics surface`
+`AnalyticsController` serves the shop overview, a CSV export, the owner-only backfill and the stored
+digests. Every endpoint reads a *stored rollup* — none folds an event log on the request path, and
+that is not a performance decision: the phase's promise is that a number in the console, a number in
+last night's WhatsApp message and a number `recompute` produces are the same number, and the only way
+to keep it is for all three to read the same row.
+
+`previousKpis` is computed server-side over the immediately preceding window of equal length, so two
+views of the same page cannot disagree about what "last period" meant, and it is `null` rather than a
+row of nulls when there is nothing behind it — an arrow pointing down against a period the shop was
+not using the product for would be a lie.
+
+`RetentionController` serves the ledger, the touches (sent *and* withheld, each with the gate's own
+refusal code), the feedback, the alerts and the card drawer's next-visit prompts. It has no endpoint
+that sends a message, deliberately: a "send now" button would be a way around consent, purpose, quiet
+hours and the twenty-one-day floor, all four of which the acceptance gate says every retention touch
+passes. Its two writes are facts a person collected at the counter — a renewal date and an odometer
+reading — and neither causes a message.
+
+### `[6.9] DONE — the console's Analytics pages`
+`/analytics` (overview, every KPI the plan names, day-by-day table, CSV export, owner-only "check
+these numbers"), `/analytics/ledger`, `/analytics/retention` and `/analytics/digests`. `KpiTile`
+enforces the one rule these pages exist to keep: **a null renders as "no data", never as a zero.**
+"We have not asked for an approval" and "every approval was refused" are different facts, and a
+dashboard that drew both as 0% tells a shop it is failing at something it has not started.
+
+The `RecomputeButton` is the audit story on a screen. An owner who does not believe a number can make
+the system derive it again in front of them, and the result is reported in words — a change is drawn
+as a warning even though the operation succeeded, because a derived value that moved is the news.
+
+The card drawer gained the "while it's here" panel (6.2), read separately rather than folded into the
+job-card DTO: it is a different question about a different aggregate, and a shop with retention
+switched off should not pay for the join on every card open.
+
+### `[6.9] DONE — `pnpm metrics:recompute``
+`packages/db/src/cli/recompute.ts`. Built on `MetricsService` directly rather than on the retention
+runtime, so the command needs `@serviceloop/domain` and a database and nothing else — it must work
+from a backup with the original workers long gone.
+
+*Changed* means one precise thing: a day that already had a stored rollup produced different numbers.
+A day the fold had never seen is *filled in*, and counting those as changes would make the alarm fire
+on its own first run and be muted for ever after. There is no dry-run flag, because a fold that
+reproduces the stored rollup writes the identical bytes — "check" and "repair" are the same
+operation, and a flag that pretended otherwise would be a flag somebody trusted in production.
+
+### `[6.x] DONE — `pnpm demo:phase6``
+15 steps against Postgres on a hand-wound clock: April's delivery with the brakes deferred, the
+ledger row with its horizon and its `season:monsoon` tag, the feedback ask and the single review
+link, the separate MARKETING ask, a May scan that correctly finds nothing due, the July season
+trigger, the one-tap booking, the conversion on a second card, a second customer's negative feedback
+freezing retention for them, the fold, the digest with every figure independently recomputed, and a
+recompute of the whole quarter that changes nothing.
+
+The independent recomputation in step 13 is built from the pure `computeRollup` and raw
+`events_outbox` rows rather than from the metrics service — a check that went through the same code
+path as the thing it is checking would prove only that the code is deterministic.
+
+### Five defects the integration work surfaced
+None of these could have been caught by a typecheck, and three of them were wrong in front of a
+customer.
+
+1. **The declined-at date on a ledger row came from the database clock, not the domain clock.**
+   `PgWorkItemStore.recordDeclineOrDefer` wrote the bare ledger row with no `created_at`, so
+   Postgres's `now()` filled it — while every *event* about that decline carried the transition's own
+   instant. The re-pitch quotes that date back to the customer, and the first green run of the demo
+   produced "when we serviced your Swift in September 2026" for a car serviced in April. The port now
+   takes `at` and the store writes it.
+2. **The consent registry's "newest wins" had no tiebreak.** `PgConsentStore.current` ordered by
+   `created_at desc` alone, and `created_at` is written from the *service's* clock — so two decisions
+   recorded in one instant (a batch, a test, an opt-out and its acknowledgement in one transaction)
+   tie, and Postgres is free to return either. "Either" is the wrong answer to "does this customer
+   consent?". Ordering now falls through to `id desc`; UUIDv7 is monotonic within a process, so the
+   later write sorts later. This is a phase-2 correctness fix found by a phase-6 demo.
+3. **Any later message overwrote a customer's complaint.** `findOpenForCustomer` returns the newest
+   feedback record that has not *expired*, which for an answered one is for ever. Wiring the inbound
+   comment path on top of that meant the next "is my car ready?" — a fortnight later — silently
+   replaced the sentence the recovery task existed because of. Found by reading a live row after an
+   end-to-end run: the demo had written "the noise is still there and nobody called me back", and
+   the database held "Any update?". `attachComment` now takes only what arrives within an hour of
+   the face, which is the length of a conversation.
+4. **A first fold was reported as a change.** `RollupStore.upsert` returns `changed` for any row
+   whose hash differs from what was stored, and for a day that had no rollup that is trivially
+   true. The CLI exited non-zero on its own first run over a shop's history, and the console's
+   "check these numbers" told an owner that thirteen of fourteen days "produced different numbers"
+   the first time they pressed it. *Changed* now means one thing in all three places — the CLI, the
+   API and the button: a day that **already had** a rollup produced different numbers. A day the
+   fold had never seen is *filled in*, and `RecomputeResult` carries both counts separately. An
+   alarm that fires on its own first run is an alarm nobody reads afterwards.
+5. **A doubled full stop in the re-pitch.** The catalogue copy supplies its own sentence ending, and
+   the technician's note usually ends with one too: "metal to metal soon.." in front of a customer
+   reads as carelessness about everything else in the message. The composer trims it.
+
+### Files
+`packages/domain/src/{messaging/ports.ts,messaging/inbound-handler.ts,retention/digest-service.ts,retention/retention-service.ts,retention/feedback-service.ts,retention/index.ts,testing/retention-harness.ts,ports.ts,work-item/transition-service.ts,testing/in-memory.ts}`,
+`packages/db/src/{stores/retention-store.ts,stores/work-item-store.ts,stores/messaging-store.ts,cli/recompute.ts}`,
+`packages/agent-core/src/retention-composition.ts`,
+`packages/shared/src/{contracts.ts,i18n/catalogue.ts}`,
+`packages/config/src/env.ts`,
+`apps/workers/src/{main.ts,retention-wiring.ts,handlers/retention.ts,handlers/retention.test.ts}`,
+`apps/api/src/{app.module.ts,infra/tokens.ts,messaging/messaging.module.ts,messaging/retention.providers.ts,retention/}`,
+`apps/console/src/{app/(app)/analytics/,app/(app)/layout.tsx,app/(app)/board/[id]/page.tsx,app/api/[...path]/route.ts,components/kpi-tile.tsx,components/recompute-button.tsx}`,
+`apps/console/test/e2e/analytics.spec.ts`, `apps/console/playwright.config.ts`,
+`packages/db/test/schema.test.ts` (the table count is now 50),
+`packages/simulator/src/scenarios/phase6-demo.ts`, `.env.example`, `README.md`,
+`.github/workflows/ci.yml`.
+
+## Phase 6 Acceptance Gate — current state
+
+- [x] **A declined brake-pad item resurfaces on the season trigger, converts via one-tap booking,
+      and shows up in "₹ recovered" — the full arc in one sandbox demo.** `demo:phase6` steps
+      03–09, against the real database: the ledger row with `season:monsoon` and a 90-day horizon,
+      a May scan that finds nothing due, the July scan whose hit is `season` (beating the elapsed
+      horizon), a message quoting April's visit and the technician's 2.1mm with the original
+      ₹2,400 honoured, `BOOK`, and ₹2,400 attributed back through `work_items.ledger_item_id`.
+- [x] **Negative feedback → owner alerted in realtime, recovery task created, retention frozen for
+      that customer; positive → single review ask.** `demo:phase6` steps 04, 10 and 11. The
+      "realtime" claim is asserted rather than described: the alert row exists on the same tick the
+      answer was recorded, not at 20:30. The freeze is proven by a re-pitch to that customer being
+      refused `RETENTION_FROZEN`. The single review ask is asserted on the *messages* — exactly one
+      outbound containing the link — because that is where nagging would show.
+- [x] **Every retention touch passes the OutboundGate purpose/consent/frequency checks;
+      "Not interested" and revocation are permanent and instant.** The gate is the only send path
+      (`no-bypass.test.ts` greps for it), and the demo wires it with the retention frequency reader
+      so the 21-day floor and the freeze are properties of the send rather than of the composer.
+      The demo's own MARKETING ask was blocked by the shop's hourly cap on its first run and had to
+      be moved three hours later, which is the guardrail working. "Not interested" closing an item
+      for ever is `retention.test.ts`; the tap now reaches the service through the inbound handler.
+- [x] **Digest numbers match independent recomputation on the golden day; one-tap actions work.**
+      `digest.test.ts` recomputes from the events the services actually emitted, and `demo:phase6`
+      step 13 recomputes from raw `events_outbox` rows through the pure fold. The claim action is
+      implemented and has four tests, including the one asserting it does *not* empty the pending
+      list.
+- [x] **Metrics recompute reproduces rollups exactly; analytics pages render all KPIs from the
+      plan.** `pnpm metrics:recompute` over 122 shop-days: 0 changed. `metrics.test.ts` has the
+      property test over 60 randomised event fixtures. The console renders eighteen KPI tiles, and
+      `analytics.spec.ts` asserts every one of them by test id in Chromium, desktop and mobile —
+      including that each rate renders as a percentage or as "No data" and never as anything else.
+- [x] **`pnpm demo:phase6` simulates a compressed month (fake clock) and prints the digest + KPI
+      summary.** 15/15, re-runnable. It runs a compressed *quarter* rather than a month — see the
+      deviation note below.
+- [ ] **Tag `phase-6-complete`.** Ready to create. Not created, because a git tag is the user's call
+      rather than something to do unasked.
+
+## Decisions & deviations — Phase 6
+
+86. **The demo runs a compressed quarter, not a compressed month.** The phase asks for a month. The
+    shop's own configuration puts the brake-wear horizon at 90 days, and the season trigger
+    explicitly refuses to shorten a horizon a technician asked for — so a month-long demo could only
+    show the season trigger by first editing the shop's config to disagree with itself. April to
+    July is the arc the phase's own example copy describes ("during April's service … with the rains
+    starting").
+87. **The demo widens `analytics.recoveryCohortDays` to 180.** The shipped default is 90, and so is
+    the shipped brake horizon — so a brake item that converts on the horizon it was given lands one
+    day *outside* the recovery cohort, and the headline rate reads 0% for exactly the recovery the
+    product is proudest of. The demo sets a cohort longer than the shop's slowest horizon and says
+    why in a comment. See the open question below: the shipped default was left alone, because
+    changing it silently would move every shop's headline KPI.
+88. **The digest claim does not remove an approval from the pending list.** Recorded at length in
+    the 6.7 note above. The `digest.claimed_ack` copy was corrected in all three languages rather
+    than the behaviour being changed to match the copy.
+89. **A bare four-digit number is never read as an odometer reading.** The ambiguity with a
+    registration fragment is not theoretical in this product — the whole status pipeline is built
+    around technicians and customers naming cars by their last four digits. Losing a genuine
+    sub-10,000 km reading typed without a unit is the cheaper mistake.
+90. **`createRetentionWiring` is duplicated between the API and the workers.** The same shape phase
+    4 has with `createLoopStores`, and for the same reason: `createRetentionRuntime` lives in
+    `agent-core` and the Pg stores live in `db`, and neither package depends on the other. What was
+    *not* duplicated is the SQL — `openVisitsByVehicle` and `jobCardLabels` moved into
+    `packages/db`, where reads over the schema belong.
+91. **`RETENTION_RUNTIME` is provided by `MessagingModule`, not by `RetentionModule`.**
+    `InboundHandler` needs it, because the ledger's one-tap answers, the feedback faces and the
+    MARKETING ask all arrive as inbound taps. Providing it beside the handler keeps the module graph
+    acyclic; `RetentionModule` is controllers only and imports messaging.
+92. **The analytics endpoints never fold on the request path.** Structural rather than stylistic:
+    `AnalyticsController` holds a `MetricsService` and a database handle used only for reading
+    stored digest payloads, so there is no handle on it that could reach a live query even if
+    somebody wanted one. That is "one source of numeric truth" made impossible to violate by
+    accident.
+93. **The CSV export computes its per-day KPIs in the controller.** The stored rollup carries counts,
+    not rates, and a merged range's rates are not a mean of daily rates — so the per-day column is
+    computed from the same ratios `rollupKpis` uses. A null stays an empty cell rather than becoming
+    a zero: `=AVERAGE()` over an empty cell is right and over a fabricated zero is wrong.
+
+## OPEN QUESTIONS — Phase 6
+
+27. **The shipped `analytics.recoveryCohortDays` (90) collides with the shipped brake horizon (90).**
+    A declined-work item re-pitched on its own horizon and converted the same day is attributed to a
+    cohort that has just stopped including it, so the headline "declined-work recovery rate" reads 0%
+    for the slowest and most valuable recoveries. Both numbers come straight from the phase file
+    (§6.1 "brake wear 60–90d", §6.9 "90-day cohort"), so this is a collision in the spec rather than
+    a bug in the code — but a shop reading its own dashboard will not care whose fault it is. The
+    conservative fix is to make the default cohort the longest configured horizon plus a margin;
+    it was not applied because changing it silently moves every existing shop's headline number.
+28. **The weekly digest's trend lines are computed but the weekly edition is barely exercised.**
+    `demo:phase6` happened to fold a Sunday and produced a `WEEKLY` brief with a trend line, which is
+    how it was noticed working. There is no test that asserts a week's trends against an independent
+    recomputation the way `digest.test.ts` does for a day.
+29. **Multi-shop consolidation is implemented and untested end to end.**
+    `DigestService.composeConsolidated` exists and the directory answers `shopsForOwner`, but no test
+    or demo has an owner with two shops. The seeded world has one.
+30. **The next-visit prompt is read-only.** The drawer shows the deferred work and says an advisor
+    should add it as a work item; it does not add it. Doing so means writing
+    `work_items.ledger_item_id`, which is the mechanism the whole recovery figure depends on, and a
+    button that creates work items is a phase-3 surface rather than a phase-6 one. Until it exists,
+    the attribution depends on an advisor doing it by hand — which is what `demo:phase6` step 09
+    simulates.
+31. **Document-expiry enrolment has no console surface.** The API records a renewal date and the
+    WhatsApp enrolment tap works, but an advisor at the counter cannot enrol a customer from the
+    console — only record the date. The separation is deliberate (recording a date is not permission
+    to write about it); the missing half is a consent capture UI, which belongs with the phase-7
+    consent work.

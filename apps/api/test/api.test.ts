@@ -14,7 +14,15 @@ import {
   type Database,
   type DatabaseHandle,
 } from '@serviceloop/db';
-import { uuidv7 } from '@serviceloop/shared';
+import {
+  AnalyticsRangeSchema,
+  LedgerListSchema,
+  NextVisitPromptListSchema,
+  RecomputeResultSchema,
+  SoftphonePollResponseSchema,
+  SoftphoneStateSchema,
+  uuidv7,
+} from '@serviceloop/shared';
 import { eq, sql } from 'drizzle-orm';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
@@ -78,6 +86,10 @@ beforeAll(async () => {
   process.env['DATABASE_URL'] = databaseUrl;
   process.env['REDIS_URL'] = redisUrl;
   process.env['STORAGE_DRIVER'] = 'memory';
+  // The softphone's line plays at real time by default, which is right for a
+  // demo somebody is listening to and wrong for a suite: a ten-second greeting
+  // would be ten seconds of CI. Nothing under test changes.
+  process.env['VOICE_LOOPBACK_PLAYBACK_SPEED'] = '25';
   process.env['OTP_RESEND_COOLDOWN_SECONDS'] = '0';
   resetEnvCache();
 
@@ -165,6 +177,28 @@ async function signIn(phone: string): Promise<{ token: string; cookies: string[]
   const raw = verified.headers['set-cookie'];
   const cookies = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
   return { token: (verified.body as { accessToken: string }).accessToken, cookies };
+}
+
+/**
+ * A second visit for the customer whose earlier card is `fromJobCardId`.
+ *
+ * The next-visit prompt is only interesting on a *different* card: the whole
+ * point of it is that this vehicle is back on the floor.
+ */
+async function createCardForCustomer(fromJobCardId: string): Promise<string> {
+  const source = await db.execute<{ customer_id: string; vehicle_id: string | null }>(sql`
+    select customer_id, vehicle_id from job_cards where id = ${fromJobCardId}
+  `);
+  const jobCardId = uuidv7();
+  await db.insert(schema.jobCards).values({
+    id: jobCardId,
+    shopId: DEMO_SHOP_ID,
+    customerId: source.rows[0]?.customer_id ?? '',
+    vehicleId: source.rows[0]?.vehicle_id ?? null,
+    code: `JC-RETURN-${jobCardId.slice(-4).toUpperCase()}`,
+    state: 'OPEN',
+  });
+  return jobCardId;
 }
 
 describe('health', () => {
@@ -707,5 +741,399 @@ describe('sandbox simulator', () => {
     const body = response.body as { trace: Array<{ stage: string }>; conversationId: string | null };
     expect(body.conversationId).not.toBeNull();
     expect(body.trace.map((step) => step.stage)).toContain('router');
+  });
+});
+
+
+/**
+ * The softphone, over HTTP (phase 5.1).
+ *
+ * A whole telephone call driven the way the console drives it: ring in, answer,
+ * listen, press a key, listen again. What makes this worth writing rather than
+ * trusting the unit suite is that it proves the *seam* — that the browser's far
+ * end really is the loopback adapter behind the same `TelephonyPort` a telco
+ * would sit behind, that the page addresses a call by its row id rather than by
+ * the line's, and that the transcript it renders is the persisted one.
+ */
+describe('voice softphone', () => {
+  beforeAll(async () => {
+    // Voice is off for a new shop, deliberately (§6: L0 first). Switching it on
+    // is what an owner does in settings, and the softphone cannot answer a line
+    // the shop has not published.
+    await db.execute(sql`
+      update shop_config
+      set config = jsonb_set(
+            config,
+            '{voice}',
+            coalesce(config->'voice', '{}'::jsonb)
+              || '{"enabled":true,"outboundEnabled":true,"inboundEnabled":true}'::jsonb
+          )
+      where shop_id = ${DEMO_SHOP_ID}
+    `);
+  });
+
+  it('reports what the page needs to render itself', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const response = await request(server)
+      .get('/voice/softphone')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const state = SoftphoneStateSchema.parse(response.body);
+    expect(state).toMatchObject({ driver: 'loopback', enabled: true, killSwitch: false });
+    // Personas are the shop's own customers, so a developer rings somebody who
+    // exists rather than a fixture with no job card.
+    expect(state.personas.length).toBeGreaterThan(0);
+  });
+
+  it('answers an inbound call and reaches a person on 0', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const auth = (req: request.Test): request.Test =>
+      req.set('Authorization', `Bearer ${token}`);
+
+    const state = SoftphoneStateSchema.parse(
+      (await auth(request(server).get('/voice/softphone')).expect(200)).body,
+    );
+    const persona = state.personas[0];
+    expect(persona).toBeDefined();
+
+    const started = await auth(
+      request(server).post('/voice/softphone/inbound').send({ personaId: persona?.id }),
+    ).expect(201);
+
+    const call = (started.body as { call: { callId: string } | null }).call;
+    expect(call, JSON.stringify(started.body)).not.toBeNull();
+    const callId = call?.callId ?? '';
+
+    await auth(request(server).post(`/voice/softphone/${callId}/answer`)).expect(201);
+
+    // The ⚿ opening, marked in the transcript the page renders. Asserted on the
+    // marks rather than on the words: this shop's customer answers in Tamil,
+    // and a compliance check by string comparison breaks the first time
+    // somebody improves a Tamil sentence.
+    const opening = await listen(auth, callId);
+    expect(opening.turns.filter((turn) => turn.mandatory).length).toBeGreaterThanOrEqual(2);
+    // Audio actually crossed the wire: the page has something to play.
+    expect(opening.audioBytes).toBeGreaterThan(0);
+
+    await auth(
+      request(server).post(`/voice/softphone/${callId}/speak`).send({ dtmf: '0' }),
+    ).expect(201);
+
+    // 0 reaches a person from anywhere, and the advisor is whispered a summary
+    // before the legs join — which is what the console screen-pops.
+    const bridged = await listen(auth, callId, opening.cursor);
+    expect(bridged.turns.length).toBeGreaterThan(0);
+    expect(bridged.screenPop?.whisper ?? '').not.toHaveLength(0);
+
+    // The console's own read of the finished call, from the persisted rows.
+    const detail = await auth(request(server).get(`/voice/calls/${callId}`)).expect(200);
+    const body = detail.body as {
+      call: { direction: string; handedOff: boolean; whisperText: string | null };
+      transcript: Array<{ scriptKey: string | null; mandatory: boolean }>;
+    };
+
+    expect(body.call.direction).toBe('INBOUND');
+    expect(body.call.handedOff).toBe(true);
+    expect(body.transcript[0]?.scriptKey).toBe('voice.inbound.greeting');
+    expect(body.transcript.some((turn) => turn.scriptKey === 'voice.recording_notice')).toBe(true);
+  });
+});
+
+/**
+ * Polls the handset until the line goes quiet.
+ *
+ * Polls rather than waits for a length, because an agent turn is several
+ * utterances and the gaps between them are milliseconds — which is exactly the
+ * loop the console's own softphone page runs.
+ */
+async function listen(
+  auth: (req: request.Test) => request.Test,
+  callId: string,
+  cursor = 0,
+): Promise<{
+  turns: Array<{ text: string; mandatory: boolean }>;
+  cursor: number;
+  audioBytes: number;
+  screenPop: { whisper: string } | null;
+}> {
+  const turns: Array<{ text: string; mandatory: boolean }> = [];
+  let audioBytes = 0;
+  let screenPop: { whisper: string } | null = null;
+  let quiet = 0;
+  let at = cursor;
+
+  for (let attempt = 0; attempt < 2_000 && quiet < 40; attempt += 1) {
+    const response = await auth(
+      request(server).get(`/voice/softphone/${callId}/poll`).query({ cursor: at }),
+    ).expect(200);
+
+    const body = SoftphonePollResponseSchema.parse(response.body);
+    turns.push(...body.turns.map((turn) => ({ text: turn.text, mandatory: turn.mandatory })));
+    audioBytes += Buffer.from(body.audioBase64, 'base64').length;
+    if (body.screenPop !== null) screenPop = { whisper: body.screenPop.whisper };
+    at = body.cursor;
+
+    quiet = body.turns.length === 0 && body.audioBase64.length === 0 ? quiet + 1 : 0;
+    if (body.call?.endedAt != null) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  return { turns, cursor: at, audioBytes, screenPop };
+}
+
+/* ========================================================================== *
+ * Phase 6 — the retention and analytics surface
+ * ========================================================================== */
+
+describe('retention & analytics', () => {
+  let ledgerItemId: string;
+  let vehicleId: string;
+  let jobCardId: string;
+  let today: string;
+
+  beforeAll(async () => {
+    // A declined item on a seeded card, written directly. The *lifecycle* that
+    // produces one is proven in the domain suite and in `demo:phase6`; what
+    // these tests are about is what the console can read back.
+    const card = await db.execute<{ id: string; vehicle_id: string; customer_id: string }>(sql`
+      select id, vehicle_id, customer_id from job_cards
+      where shop_id = ${DEMO_SHOP_ID} and vehicle_id is not null
+      order by created_at asc limit 1
+    `);
+    jobCardId = card.rows[0]?.id ?? '';
+    vehicleId = card.rows[0]?.vehicle_id ?? '';
+    const customerId = card.rows[0]?.customer_id ?? '';
+
+    const workItem = await db.execute<{ id: string }>(sql`
+      select id from work_items where shop_id = ${DEMO_SHOP_ID} and job_card_id = ${jobCardId}
+      order by sequence asc limit 1
+    `);
+
+    ledgerItemId = uuidv7();
+    await db.execute(sql`
+      insert into declined_work_ledger (
+        id, shop_id, job_card_id, work_item_id, customer_id, vehicle_id, kind,
+        decline_reason, reason, amount_paise, category, title, technician_note,
+        estimate_line_ids, follow_up_after, trigger_tags, status, created_at, updated_at
+      ) values (
+        ${ledgerItemId}, ${DEMO_SHOP_ID}, ${jobCardId}, ${workItem.rows[0]?.id ?? uuidv7()},
+        ${customerId}, ${vehicleId}, 'DEFERRED', 'customer_deferred',
+        'Customer asked to do it next time', 240000, 'brakes',
+        'Front brake pad replacement', 'Front pads worn to 2.1mm.',
+        '[]'::jsonb, now() + interval '30 days', '["next_visit","season:monsoon"]'::jsonb,
+        'OPEN', now(), now()
+      )
+      on conflict (work_item_id) do nothing
+    `);
+
+    today = new Date().toISOString().slice(0, 10);
+  });
+
+  it('serves the declined-work ledger with the two totals that matter', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const response = await request(server)
+      .get('/retention/ledger')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const list = LedgerListSchema.parse(response.body);
+    const mine = list.items.find((item) => item.id === ledgerItemId);
+    expect(mine).toBeDefined();
+    expect(mine?.technicianNote).toContain('2.1mm');
+    expect(mine?.triggerTags).toContain('season:monsoon');
+    // The totals come from the server, so a filtered page cannot change them.
+    expect(list.openValuePaise).toBeGreaterThanOrEqual(240_000);
+  });
+
+  it('filters the ledger by status without changing the totals', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const all = LedgerListSchema.parse(
+      (await request(server).get('/retention/ledger').set('Authorization', `Bearer ${token}`)).body,
+    );
+    const converted = LedgerListSchema.parse(
+      (
+        await request(server)
+          .get('/retention/ledger?status=CONVERTED')
+          .set('Authorization', `Bearer ${token}`)
+      ).body,
+    );
+
+    expect(converted.items.every((item) => item.status === 'CONVERTED')).toBe(true);
+    expect(converted.openValuePaise).toBe(all.openValuePaise);
+  });
+
+  it('offers the “while it’s here” prompt on a different card for the same customer', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+
+    // On the card the work was declined on, there is nothing to say: the
+    // customer refused it on this visit.
+    const same = await request(server)
+      .get(`/retention/next-visit/${jobCardId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(NextVisitPromptListSchema.parse(same.body).prompts).toEqual([]);
+
+    // A second card for the same customer is the moment the phase is about.
+    const secondCard = await createCardForCustomer(jobCardId);
+    const other = await request(server)
+      .get(`/retention/next-visit/${secondCard}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const prompts = NextVisitPromptListSchema.parse(other.body).prompts;
+    expect(prompts.map((prompt) => prompt.ledgerItemId)).toContain(ledgerItemId);
+    expect(prompts[0]?.technicianNote).toContain('2.1mm');
+  });
+
+  it('404s a next-visit read for another shop’s card', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    await request(server)
+      .get(`/retention/next-visit/${otherShopCardId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(404);
+  });
+
+  it('records a renewal date without enrolling anybody in reminders', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const response = await request(server)
+      .post('/retention/documents')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId, kind: 'INSURANCE', expiresOn: '2027-03-31' })
+      .expect(201);
+
+    expect(response.body).toMatchObject({ recorded: true, enrolled: false });
+
+    // The row exists and is *not* enrolled. That separation is the whole point:
+    // knowing a date is not permission to write about it.
+    const stored = await db.execute<{ enrolled_at: Date | null }>(sql`
+      select enrolled_at from vehicle_documents
+      where shop_id = ${DEMO_SHOP_ID} and vehicle_id = ${vehicleId} and kind = 'INSURANCE'
+    `);
+    expect(stored.rows[0]?.enrolled_at ?? null).toBeNull();
+  });
+
+  it('records a console odometer reading that can never wake a re-pitch', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    await request(server)
+      .post('/retention/odometer')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId, odometerKm: 64_500 })
+      .expect(201);
+
+    const stored = await db.execute<{ source: string }>(sql`
+      select source from odometer_readings
+      where shop_id = ${DEMO_SHOP_ID} and vehicle_id = ${vehicleId}
+      order by read_at desc limit 1
+    `);
+    // Not CUSTOMER_VOLUNTEERED. The odometer trigger reads only readings the
+    // customer gave in their own words, and an advisor typing one at the
+    // counter must never be able to cause a message.
+    expect(stored.rows[0]?.source).toBe('CONSOLE');
+  });
+
+  it('404s a vehicle belonging to another shop', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    await request(server)
+      .post('/retention/odometer')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ vehicleId: uuidv7(), odometerKm: 10_000 })
+      .expect(404);
+  });
+
+  it('serves an analytics summary whose rates are null, not zero, with no data', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const response = await request(server)
+      .get('/analytics/summary')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    const range = AnalyticsRangeSchema.parse(response.body);
+    expect(range.to).toBe(today);
+    // "We have not asked for an approval" and "every approval was refused" are
+    // different facts, and a dashboard that drew both as 0% would tell a shop
+    // it is failing at something it has not started.
+    expect(range.kpis.approvalConversionRate).toBeNull();
+  });
+
+  it('folds a day and then quotes the same numbers back', async () => {
+    const { token } = await signIn(DEMO_OWNER.phone);
+
+    const recompute = await request(server)
+      .post('/analytics/recompute')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ from: today })
+      .expect(201);
+
+    const result = RecomputeResultSchema.parse(recompute.body);
+    expect(result.days).toBe(1);
+
+    // And the second pass changes nothing at all, which is the audit story for
+    // every rupee this phase reports.
+    const again = RecomputeResultSchema.parse(
+      (
+        await request(server)
+          .post('/analytics/recompute')
+          .set('Authorization', `Bearer ${token}`)
+          .send({ from: today })
+      ).body,
+    );
+    expect(again.changedDays).toBe(0);
+
+    const summary = AnalyticsRangeSchema.parse(
+      (
+        await request(server)
+          .get(`/analytics/summary?from=${today}&to=${today}`)
+          .set('Authorization', `Bearer ${token}`)
+      ).body,
+    );
+    expect(summary.days).toHaveLength(1);
+  });
+
+  it('refuses a backfill wider than the shop has configured, with a field error', async () => {
+    const { token } = await signIn(DEMO_OWNER.phone);
+    const response = await request(server)
+      .post('/analytics/recompute')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ from: '2020-01-01', to: today })
+      .expect(400);
+
+    expect((response.body as { detail: string }).detail).toContain('maxBackfillDays');
+  });
+
+  it('keeps the backfill to owners', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    await request(server)
+      .post('/analytics/recompute')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ from: today })
+      .expect(403);
+  });
+
+  it('exports the same rollups as CSV, one row per day', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const response = await request(server)
+      .get(`/analytics/export.csv?from=${today}&to=${today}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(response.headers['content-type']).toContain('text/csv');
+    expect(response.headers['content-disposition']).toContain('attachment');
+
+    const [header, first] = response.text.trim().split('\n');
+    expect(header).toContain('recoveredPaise');
+    expect(header).toContain('declinedWorkRecoveryRate');
+    expect(first?.startsWith(today)).toBe(true);
+    // A null rate is an empty cell, never a fabricated zero: `=AVERAGE()` over
+    // an empty cell is right and over a zero is wrong.
+    expect(first).toContain(',,');
+  });
+
+  it('never serves another shop’s numbers', async () => {
+    const { token } = await signIn(DEMO_ADVISOR.phone);
+    const list = LedgerListSchema.parse(
+      (await request(server).get('/retention/ledger').set('Authorization', `Bearer ${token}`)).body,
+    );
+    expect(list.items.every((item) => item.jobCardId !== otherShopCardId)).toBe(true);
   });
 });

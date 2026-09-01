@@ -3,17 +3,26 @@ import {
   AdvisorTaskKindSchema,
   AgentObjectiveSchema,
   AgentRunOutcomeSchema,
+  CallDirectionSchema,
+  CallEndReasonSchema,
+  CallOutcomeSchema,
+  AlertKindSchema,
   ChannelTypeSchema,
   ConsentPurposeSchema,
   ConsentStatusSchema,
   ConversationKindSchema,
   CustomerDecisionSchema,
+  DeclineKindSchema,
+  DeclineReasonSchema,
+  DigestKindSchema,
   EscalationRungTypeSchema,
   EtaMaterialitySchema,
   EtaReasonSchema,
+  FeedbackSentimentSchema,
   GatePassVerifyResultSchema,
   IntakeSourceSchema,
   JobCardEventSchema,
+  LedgerStatusSchema,
   JobCardStateSchema,
   LanguageSchema,
   MediaKindSchema,
@@ -23,7 +32,10 @@ import {
   PaymentEventKindSchema,
   PaymentMethodSchema,
   PaymentStatusSchema,
+  RepitchResponseSchema,
+  RetentionTriggerSchema,
   ReviewActionSchema,
+  RollupSourceSchema,
   StatusSignalRouteSchema,
   StatusSignalSourceSchema,
   StatusSignalTypeSchema,
@@ -80,6 +92,23 @@ export const EVENT_TYPES = [
   'payment.recorded',
   'gate_pass.issued',
   'gate_pass.verified',
+  // Phase 5 — voice.
+  'call.originated',
+  'call.answered',
+  'call.ended',
+  'call.handoff_bridged',
+  'call.usage_recorded',
+  // Phase 6 — retention, feedback, digest & analytics.
+  'ledger.item_opened',
+  'ledger.repitched',
+  'ledger.item_closed',
+  'retention.touch_sent',
+  'retention.touch_skipped',
+  'feedback.requested',
+  'feedback.recorded',
+  'owner_digest.sent',
+  'alert.raised',
+  'metrics.rollup_computed',
 ] as const;
 
 export const EventTypeSchema = z.enum(EVENT_TYPES);
@@ -515,6 +544,303 @@ export const GatePassVerifiedPayloadSchema = z.object({
   actor: ActorSchema,
 });
 
+/* --- Phase 5 — voice ------------------------------------------------------ */
+
+/**
+ * A call the system decided to place — or decided not to.
+ *
+ * `blocked` carries the reason a call was refused at the port call-site
+ * (revoked consent, a cost cap, the kill switch), because a rung that did not
+ * dial is a fact the ladder, the audit trail and phase 6's containment metrics
+ * all need. A silent non-event would look identical to a call that never got
+ * scheduled.
+ */
+export const CallOriginatedPayloadSchema = z.object({
+  callId: z.string().uuid(),
+  direction: CallDirectionSchema,
+  driver: z.string().min(1),
+  objective: z.string().min(1),
+  jobCardId: z.string().uuid().nullable(),
+  customerId: z.string().uuid().nullable(),
+  conversationId: z.string().uuid().nullable(),
+  approvalRequestId: z.string().uuid().nullable(),
+  escalationId: z.string().uuid().nullable(),
+  blocked: z.string().nullable(),
+  actor: ActorSchema,
+});
+
+export const CallAnsweredPayloadSchema = z.object({
+  callId: z.string().uuid(),
+  direction: CallDirectionSchema,
+  answeredAt: z.string().datetime({ offset: true }),
+  jobCardId: z.string().uuid().nullable(),
+  customerId: z.string().uuid().nullable(),
+  actor: ActorSchema,
+});
+
+/**
+ * The terminal fact about a call.
+ *
+ * Deliberately carries the counts phase 6 aggregates — turns, whether a
+ * decision was recorded, whether it reached a person — rather than leaving the
+ * metrics service to re-derive them by joining four tables at report time.
+ */
+export const CallEndedPayloadSchema = z.object({
+  callId: z.string().uuid(),
+  direction: CallDirectionSchema,
+  outcome: CallOutcomeSchema,
+  endReason: CallEndReasonSchema,
+  durationSeconds: z.number().int().min(0),
+  turns: z.number().int().min(0),
+  /** True when the call ended in a human: a bridge or an advisor task. */
+  handedOff: z.boolean(),
+  /** Set when a `record_customer_decision` fired from this call. */
+  decision: CustomerDecisionSchema.nullable(),
+  jobCardId: z.string().uuid().nullable(),
+  customerId: z.string().uuid().nullable(),
+  approvalRequestId: z.string().uuid().nullable(),
+  actor: ActorSchema,
+});
+
+export const CallHandoffBridgedPayloadSchema = z.object({
+  callId: z.string().uuid(),
+  advisorStaffId: z.string().uuid().nullable(),
+  whisperText: z.string(),
+  bridgedAt: z.string().datetime({ offset: true }),
+  actor: ActorSchema,
+});
+
+/**
+ * What the call cost, in the three currencies that matter (phase 5.7).
+ *
+ * Telco seconds, speech seconds and model tokens are metered separately
+ * because they fail separately: a shop can be inside its minute budget and
+ * outside its model budget on the same afternoon, and a single blended number
+ * would hide which one to fix.
+ */
+export const CallUsageRecordedPayloadSchema = z.object({
+  callId: z.string().uuid(),
+  telcoSeconds: z.number().int().min(0),
+  sttSeconds: z.number().int().min(0),
+  ttsSeconds: z.number().int().min(0),
+  llmInputTokens: z.number().int().min(0),
+  llmOutputTokens: z.number().int().min(0),
+  estimatedCostPaise: z.number().int().min(0),
+  /** Set when this call took the shop past a cap. */
+  capBreached: z.enum(['SHOP_DAILY', 'PLATFORM_DAILY']).nullable(),
+  actor: ActorSchema,
+});
+
+/* ------------------------------------------------------------------------ *
+ * Phase 6 payloads — retention, feedback, digest & analytics.
+ *
+ * These carry more denormalised context than the phases before them, and that
+ * is a deliberate consequence of 6.9 rather than carelessness. The metrics
+ * service is an **event-sourced fold**: `recompute --from` must reproduce a
+ * rollup exactly from the log alone, which means every number a KPI needs has
+ * to be *on* an event rather than reachable by joining four tables whose
+ * present-day contents have moved on since. So `ledger.item_closed` carries the
+ * amount and the date the item was ledgered, and `feedback.recorded` carries
+ * whether the review ask went out — facts a join could answer today and could
+ * not answer identically after a backfill six months from now.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * A declined or deferred work item entered the ledger with a horizon.
+ *
+ * Written in the same transaction as the work-item transition that produced it:
+ * phase 3.6 already made the transition, and phase 6.1 gives the row its
+ * reason, its horizon and its trigger tags. `amountPaise` is the denominator of
+ * the recovery rate the whole business case rests on, so it is stated once,
+ * here, and never recomputed from an estimate that may since have been
+ * superseded.
+ */
+export const LedgerItemOpenedPayloadSchema = z.object({
+  ledgerItemId: z.string().uuid(),
+  jobCardId: z.string().uuid(),
+  workItemId: z.string().uuid(),
+  customerId: z.string().uuid().nullable(),
+  vehicleId: z.string().uuid().nullable(),
+  kind: DeclineKindSchema,
+  reason: DeclineReasonSchema,
+  amountPaise: z.number().int().nonnegative(),
+  /** Shop-KB category ("brakes", "tyres", "cosmetic") — drives the horizon. */
+  category: z.string().nullable(),
+  /** Null for a category the shop never re-pitches, such as cosmetic work. */
+  followUpAfter: z.string().datetime({ offset: true }).nullable(),
+  triggerTags: z.array(z.string()),
+  actor: ActorSchema,
+});
+
+/** One re-pitch of one ledger item actually reached the customer. */
+export const LedgerRepitchedPayloadSchema = z.object({
+  ledgerItemId: z.string().uuid(),
+  touchId: z.string().uuid(),
+  jobCardId: z.string().uuid(),
+  customerId: z.string().uuid(),
+  trigger: RetentionTriggerSchema,
+  /** 1 for the first re-pitch, 2 for the second. The cap is two. */
+  repitchCount: z.number().int().positive(),
+  amountPaise: z.number().int().nonnegative(),
+  purpose: ConsentPurposeSchema,
+  messageId: z.string().uuid().nullable(),
+  actor: ActorSchema,
+});
+
+/**
+ * A ledger item reached a terminal state.
+ *
+ * `openedAt` and `ledgeredAmountPaise` travel with it so the 90-day recovery
+ * cohort is a single-pass fold: converted rupees have to be attributed to the
+ * cohort the item was *ledgered* in rather than the one it converted in, and a
+ * fold that had to look the opening up would not be a fold.
+ */
+export const LedgerItemClosedPayloadSchema = z.object({
+  ledgerItemId: z.string().uuid(),
+  jobCardId: z.string().uuid(),
+  customerId: z.string().uuid().nullable(),
+  status: LedgerStatusSchema,
+  openedAt: z.string().datetime({ offset: true }),
+  ledgeredAmountPaise: z.number().int().nonnegative(),
+  /** What the customer actually spent. Zero for every non-conversion. */
+  recoveredAmountPaise: z.number().int().nonnegative(),
+  /** The visit the recovered work was done on, when there is one. */
+  convertedJobCardId: z.string().uuid().nullable(),
+  response: RepitchResponseSchema.nullable(),
+  reason: z.string(),
+  actor: ActorSchema,
+});
+
+/**
+ * A retention touch left the building.
+ *
+ * One event for every retention-shaped message — re-pitches, service-due
+ * reminders, document reminders, win-backs — because the 21-day floor is a
+ * property of all of them together, and a per-flow event would let four flows
+ * each stay inside their own cap and jointly write to somebody weekly.
+ */
+export const RetentionTouchSentPayloadSchema = z.object({
+  touchId: z.string().uuid(),
+  customerId: z.string().uuid(),
+  trigger: RetentionTriggerSchema,
+  purpose: ConsentPurposeSchema,
+  ledgerItemIds: z.array(z.string().uuid()),
+  jobCardId: z.string().uuid().nullable(),
+  vehicleId: z.string().uuid().nullable(),
+  messageId: z.string().uuid(),
+  amountPaise: z.number().int().nonnegative(),
+  actor: ActorSchema,
+});
+
+/**
+ * A retention touch that was due and did not go.
+ *
+ * A first-class fact rather than an absence: "the engine decided not to write
+ * to this customer" and "the engine never looked at this customer" are the same
+ * silence from outside and completely different bugs from inside.
+ */
+export const RetentionTouchSkippedPayloadSchema = z.object({
+  touchId: z.string().uuid(),
+  customerId: z.string().uuid(),
+  trigger: RetentionTriggerSchema,
+  ledgerItemIds: z.array(z.string().uuid()),
+  code: z.string(),
+  reason: z.string(),
+  actor: ActorSchema,
+});
+
+export const FeedbackRequestedPayloadSchema = z.object({
+  feedbackId: z.string().uuid(),
+  jobCardId: z.string().uuid(),
+  customerId: z.string().uuid(),
+  conversationId: z.string().uuid().nullable(),
+  deliveredAt: z.string().datetime({ offset: true }),
+  messageId: z.string().uuid().nullable(),
+  actor: ActorSchema,
+});
+
+/**
+ * What the customer said about the visit (phase 6.4).
+ *
+ * `reviewAsked` is on the event rather than derived from a later message,
+ * because "review velocity" is a KPI and "ask once, never nag" is a rule — both
+ * need the ask to be a recorded fact at the moment it was decided.
+ */
+export const FeedbackRecordedPayloadSchema = z.object({
+  feedbackId: z.string().uuid(),
+  jobCardId: z.string().uuid(),
+  customerId: z.string().uuid(),
+  sentiment: FeedbackSentimentSchema,
+  hasComment: z.boolean(),
+  /** True when the comment arrived as a voice note and was transcribed. */
+  viaVoiceNote: z.boolean(),
+  reviewAsked: z.boolean(),
+  /** Set on the negative route — the advisor's service-recovery task. */
+  recoveryTaskId: z.string().uuid().nullable(),
+  /** True while a negative result freezes every retention touch for them. */
+  retentionFrozen: z.boolean(),
+  actor: ActorSchema,
+});
+
+/**
+ * The evening brief went out (phase 6.7).
+ *
+ * It carries the headline figures it printed, so "what did the owner actually
+ * see on the 14th" stays answerable after the rollup has been recomputed —
+ * which is the point of an audit trail for a number a shop makes decisions on.
+ */
+export const OwnerDigestSentPayloadSchema = z.object({
+  digestId: z.string().uuid(),
+  kind: DigestKindSchema,
+  /** Local calendar day the digest covers, `YYYY-MM-DD` in the shop's zone. */
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  recipientStaffId: z.string().uuid().nullable(),
+  messageId: z.string().uuid().nullable(),
+  vehiclesIn: z.number().int().nonnegative(),
+  vehiclesOut: z.number().int().nonnegative(),
+  approvalsPending: z.number().int().nonnegative(),
+  approvedPaise: z.number().int().nonnegative(),
+  recoveredPaise: z.number().int().nonnegative(),
+  feedbackFlags: z.number().int().nonnegative(),
+  silentBays: z.number().int().nonnegative(),
+  actor: ActorSchema,
+});
+
+/**
+ * An exception an owner hears about now, not at 20:30 (phase 6.8).
+ *
+ * `incidentKey` is the dedupe identity — one alert per incident, however many
+ * times the condition is re-observed by a scan that runs every two minutes.
+ */
+export const AlertRaisedPayloadSchema = z.object({
+  alertId: z.string().uuid(),
+  kind: AlertKindSchema,
+  incidentKey: z.string().min(1),
+  subjectType: z.string(),
+  subjectId: z.string().uuid().nullable(),
+  urgency: TaskUrgencySchema,
+  detail: z.string(),
+  messageId: z.string().uuid().nullable(),
+  actor: ActorSchema,
+});
+
+/**
+ * A daily rollup was computed or recomputed (phase 6.9).
+ *
+ * `payloadHash` is what makes `recompute --from` provable rather than merely
+ * claimed: a backfill that produces a different hash for a day already folded
+ * is a regression somebody can find, and the assertion is one comparison rather
+ * than a diff of forty numbers.
+ */
+export const MetricsRollupComputedPayloadSchema = z.object({
+  day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  source: RollupSourceSchema,
+  eventsRead: z.number().int().nonnegative(),
+  payloadHash: z.string().min(1),
+  changed: z.boolean(),
+  actor: ActorSchema,
+});
+
 export const EventEnvelopeSchema = z.discriminatedUnion('type', [
   z.object({
     ...envelopeBase,
@@ -696,6 +1022,81 @@ export const EventEnvelopeSchema = z.discriminatedUnion('type', [
     type: z.literal('gate_pass.verified'),
     payload: GatePassVerifiedPayloadSchema,
   }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('call.originated'),
+    payload: CallOriginatedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('call.answered'),
+    payload: CallAnsweredPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('call.ended'),
+    payload: CallEndedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('call.handoff_bridged'),
+    payload: CallHandoffBridgedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('call.usage_recorded'),
+    payload: CallUsageRecordedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('ledger.item_opened'),
+    payload: LedgerItemOpenedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('ledger.repitched'),
+    payload: LedgerRepitchedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('ledger.item_closed'),
+    payload: LedgerItemClosedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('retention.touch_sent'),
+    payload: RetentionTouchSentPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('retention.touch_skipped'),
+    payload: RetentionTouchSkippedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('feedback.requested'),
+    payload: FeedbackRequestedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('feedback.recorded'),
+    payload: FeedbackRecordedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('owner_digest.sent'),
+    payload: OwnerDigestSentPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('alert.raised'),
+    payload: AlertRaisedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('metrics.rollup_computed'),
+    payload: MetricsRollupComputedPayloadSchema,
+  }),
 ]);
 
 export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
@@ -725,6 +1126,25 @@ export const QUEUE_NAMES = [
    */
   'status-events',
   'delivery-events',
+  /**
+   * Phase 5 gives voice its own queue for the same reason phase 4 split
+   * delivery off: a call is a real-time thing that has already finished by the
+   * time its events are dispatched, and a backlog of transcripts must not sit
+   * behind a Saturday's worth of status signals.
+   */
+  'voice-events',
+  /**
+   * Phase 6 keeps retention on its own line for the opposite reason phase 4
+   * split delivery off.
+   *
+   * Delivery got its own queue because it must not wait; retention gets one
+   * because it *may*. A re-pitch that lands twenty minutes late costs nothing,
+   * and a month-end backfill of a year's ledger items is exactly the kind of
+   * burst that would otherwise sit in front of a customer's payment reconcile.
+   * The digest and the alert stream ride here too — the alerts are latency
+   * sensitive, but they are a handful of events a day rather than a backlog.
+   */
+  'retention-events',
 ] as const;
 export type QueueName = (typeof QUEUE_NAMES)[number];
 
@@ -778,6 +1198,21 @@ export const QUEUE_BY_EVENT_TYPE: Readonly<Record<EventType, QueueName>> = {
   'payment.recorded': 'delivery-events',
   'gate_pass.issued': 'delivery-events',
   'gate_pass.verified': 'delivery-events',
+  'call.originated': 'voice-events',
+  'call.answered': 'voice-events',
+  'call.ended': 'voice-events',
+  'call.handoff_bridged': 'voice-events',
+  'call.usage_recorded': 'voice-events',
+  'ledger.item_opened': 'retention-events',
+  'ledger.repitched': 'retention-events',
+  'ledger.item_closed': 'retention-events',
+  'retention.touch_sent': 'retention-events',
+  'retention.touch_skipped': 'retention-events',
+  'feedback.requested': 'retention-events',
+  'feedback.recorded': 'retention-events',
+  'owner_digest.sent': 'retention-events',
+  'alert.raised': 'retention-events',
+  'metrics.rollup_computed': 'retention-events',
 };
 
 export function queueForEventType(type: EventType): QueueName {

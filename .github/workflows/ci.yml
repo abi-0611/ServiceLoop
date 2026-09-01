@@ -52,6 +52,13 @@ jobs:
         # fixture, so it belongs in the fast job and gates every push.
         run: pnpm sim
 
+      - name: Voice simulator (scripted calls)
+        # Whole telephone calls, and the same rule applies: no database, no
+        # telco, no model — a loopback line and fixture audio through the real
+        # streaming speech port. A voice flow checked only by a person listening
+        # to a demo regresses the first week nobody listens.
+        run: pnpm sim:voice
+
       - name: Build
         run: pnpm build
 
@@ -116,6 +123,20 @@ jobs:
 
       - name: Phase 4 demo
         run: pnpm demo:phase4
+
+      - name: Phase 5 demo
+        run: pnpm demo:phase5
+
+      - name: Phase 6 demo
+        run: pnpm demo:phase6
+
+      - name: Metrics recompute reproduces every rollup
+        # The audit story for "₹ recovered", enforced rather than described.
+        # The phase-6 demo has just folded a quarter of shop-days; re-folding
+        # them from the event log must change nothing, and the command exits
+        # non-zero if it does. A regression in the fold shows up here as a build
+        # failure rather than as a number somebody queries a year later.
+        run: pnpm metrics:recompute --from 2026-04-01 --to 2026-07-31
 
       - name: Install Playwright browsers
         run: pnpm --filter @serviceloop/console exec playwright install --with-deps chromium

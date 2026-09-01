@@ -39,7 +39,7 @@ import type { Clock } from '@serviceloop/shared';
 import { DeterministicExplanationWriter, LlmExplanationWriter } from './explanation-writer';
 import { PostChecker } from './post-checker';
 import { AgentRunner } from './runner';
-import { buildToolRegistry } from './tools';
+import { buildToolRegistry, type ToolDeps } from './tools';
 import type { ToolRegistry } from './tool-registry';
 
 /**
@@ -139,6 +139,16 @@ export interface AgentRuntimeInput<Tx> {
 export interface AgentRuntime<Tx> {
   readonly runner: AgentRunner<Tx>;
   readonly registry: ToolRegistry;
+  /**
+   * The dependency set the registry was built from.
+   *
+   * Exposed so the voice runtime can build its *own* registry — the phase-3
+   * tools plus `speak_to_caller`, closed over one call's readback state — from
+   * the identical dependencies rather than from a second hand-assembled copy.
+   * Two copies is how the phone ends up citing a different bundle than the
+   * thread does (phase 5.3).
+   */
+  readonly toolDeps: ToolDeps<Tx>;
   readonly checker: PostChecker;
   readonly approvals: ApprovalService<Tx>;
   readonly replies: ApprovalReplyHandler<Tx>;
@@ -261,7 +271,7 @@ export function createAgentRuntime<Tx>(input: AgentRuntimeInput<Tx>): AgentRunti
 
   const checker = new PostChecker(llm);
 
-  const registry = buildToolRegistry<Tx>({
+  const toolDeps: ToolDeps<Tx> = {
     uow: stores.uow,
     cards: stores.cards,
     bundles: stores.bundles,
@@ -292,7 +302,9 @@ export function createAgentRuntime<Tx>(input: AgentRuntimeInput<Tx>): AgentRunti
             stores.eta?.history(tx, shopId, jobCardId, limit) ?? Promise.resolve([]),
         }),
     scheduleFollowup: input.scheduleFollowup,
-  });
+  };
+
+  const registry = buildToolRegistry<Tx>(toolDeps);
 
   const runner = new AgentRunner<Tx>({
     uow: stores.uow,
@@ -305,5 +317,16 @@ export function createAgentRuntime<Tx>(input: AgentRuntimeInput<Tx>): AgentRunti
     ...withClock,
   });
 
-  return { runner, registry, checker, approvals, replies, ladder, bundles, reviews, tasks };
+  return {
+    runner,
+    registry,
+    toolDeps,
+    checker,
+    approvals,
+    replies,
+    ladder,
+    bundles,
+    reviews,
+    tasks,
+  };
 }

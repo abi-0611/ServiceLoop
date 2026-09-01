@@ -1,4 +1,7 @@
-export { deterministicJudge, deterministicJudgeResponder } from './judge';
+// The deterministic claim judge moved to `@serviceloop/adapters` in phase 5,
+// where the voice suite can reach it too. Re-exported so nothing that already
+// imported it from here had to change.
+export { deterministicJudge, deterministicJudgeResponder } from '@serviceloop/adapters';
 export { PERSONAS, type Persona, type PersonaOutcome, type PersonaTurn } from './personas';
 export { runPersona, type PersonaFailure, type PersonaResult } from './run-persona';
 export {

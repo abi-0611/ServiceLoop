@@ -25,6 +25,7 @@ import type {
   RungScheduler,
 } from './ports';
 import type { RungOutcome, ScheduledRung } from './types';
+import type { VoiceCallPlacer } from '../voice/ports';
 
 /**
  * The escalation ladder engine (phase 3.7).
@@ -73,6 +74,16 @@ export interface EscalationDeps<Tx> {
   readonly scheduler: RungScheduler;
   readonly audit: AuditAppender<Tx>;
   readonly outbox: OutboxWriter<Tx>;
+  /**
+   * The telephone, when the deployment has one (phase 5.4a).
+   *
+   * Optional, and its absence is not a degraded mode: a shop that has not
+   * switched voice on keeps the phase-3 rung, which raises an advisor task with
+   * everything a person needs to make the call themselves. The gate refuses on
+   * the shop's own settings too, so wiring this does not switch anybody's voice
+   * on — it only makes it possible.
+   */
+  readonly voice?: VoiceCallPlacer;
   readonly clock?: Clock;
 }
 
@@ -103,8 +114,31 @@ export interface FireRungResult {
 export class EscalationLadderEngine<Tx> {
   private readonly clock: Clock;
 
+  /**
+   * The telephone, which may be attached after construction (phase 5.4a).
+   *
+   * A constructor argument alone would not be enough: the voice runtime is
+   * built *from* this runtime — it reuses the same tools, the same checker and
+   * the same approval service — so the runner cannot exist before the ladder
+   * does. The composition root builds both and then calls `attachVoice`, which
+   * is the one place that ordering is visible rather than a rule somebody has
+   * to remember.
+   */
+  private voicePlacer: VoiceCallPlacer | undefined;
+
   constructor(private readonly deps: EscalationDeps<Tx>) {
     this.clock = deps.clock ?? systemClock;
+    this.voicePlacer = deps.voice;
+  }
+
+  /** Gives the ladder a telephone. Idempotent; the last one wins. */
+  attachVoice(placer: VoiceCallPlacer): void {
+    this.voicePlacer = placer;
+  }
+
+  /** True when this deployment is able to ring somebody. */
+  get canPlaceCalls(): boolean {
+    return this.voicePlacer !== undefined;
   }
 
   /**
@@ -138,7 +172,7 @@ export class EscalationLadderEngine<Tx> {
           ladderKey: input.objective,
           rung: index,
           rungType: rung.type,
-          channel: channelForRung(rung.type),
+          channel: channelForRung(rung.type, { canPlaceCalls: this.canPlaceCalls }),
           label: rung.label,
           scheduledAt,
           queueJobId: null,
@@ -468,12 +502,31 @@ export class EscalationLadderEngine<Tx> {
   }
 
   /**
-   * The `VOICE_OR_ADVISOR` rung.
+   * The `VOICE_OR_ADVISOR` rung (phase 5.4a).
    *
-   * Until phase 5 this raises a prioritised advisor task carrying the agent's
-   * brief — everything a person needs to make the call without reading the
-   * thread first. Phase 5 replaces the body of this method with a real outbound
-   * call; the rung type, the shop config and the audit trail do not change.
+   * The rung's name is the whole design: it rings the customer if it can, and
+   * it puts the call in front of a person if it cannot. Which of the two
+   * happens is decided by the call gate, not here — this method's job is to
+   * turn whatever the gate decided into the one thing a ladder rung has to
+   * produce, which is an outcome that either closes the loop or hands it to
+   * somebody who will (L3).
+   *
+   * Four endings, and the ordering matters:
+   *
+   *   1. **A decision.** The customer answered and said yes, no, or later. The
+   *      approval service has already recorded it and cancelled the rest of the
+   *      ladder; there is nothing left to chase.
+   *   2. **Nobody answered, once.** The phase asks for exactly one retry, and
+   *      "exactly one" is counted from the call rows for this rung rather than
+   *      from a flag, because a deferred rung keeps its id and its row.
+   *   3. **A person already has it** — bridged live, or holding an advisor task
+   *      the runtime raised on its way out. Raising a second task here would put
+   *      the same customer on the queue twice.
+   *   4. **Anything else** falls back to the phase-3 behaviour: a prioritised
+   *      task carrying the brief. A refusal the gate marked as *not* falling
+   *      back to an advisor — a customer who revoked consent — stops instead,
+   *      because tasking a person to ring somebody who asked not to be rung is
+   *      the same violation with an extra step.
    */
   private async raiseCallTask(
     rung: ScheduledRung,
@@ -481,6 +534,61 @@ export class EscalationLadderEngine<Tx> {
     traceId: string,
   ): Promise<FireRungResult> {
     const { approval, card } = subject;
+    const placer = this.voicePlacer;
+
+    if (placer !== undefined && approval.customerId !== null) {
+      const attempts = await placer.attemptsForEscalation(rung.shopId, rung.id);
+
+      const outcome = await placer.placeApprovalCall({
+        shopId: rung.shopId,
+        jobCardId: approval.jobCardId,
+        customerId: approval.customerId,
+        conversationId: approval.conversationId,
+        approvalRequestId: approval.id,
+        escalationId: rung.id,
+        amountPaise: approval.amountPaise,
+        workSummary:
+          card === null
+            ? 'the work waiting on your approval'
+            : `${card.vehicleLabel} (${card.code})`,
+        traceId,
+      });
+
+      if (outcome.placed && outcome.answered) {
+        if (outcome.decision !== null) {
+          return { outcome: 'SENT', detail: `call ${outcome.callId}: ${outcome.decision}` };
+        }
+        if (outcome.handedOff) {
+          return { outcome: 'TASK_CREATED', detail: `call ${outcome.callId} ended with a person` };
+        }
+        // Answered, no decision, nobody holding it: the customer hung up. The
+        // rungs below this one are what chase that, and raising a task here
+        // would pre-empt a ladder that has not finished.
+        return { outcome: 'SENT', detail: `call ${outcome.callId} ended without a decision` };
+      }
+
+      if (outcome.placed && outcome.retryAfterMinutes !== null && attempts === 0) {
+        // Nobody answered, and the shop allows one more attempt. `attempts` was
+        // read *before* this call, so zero means this was the rung's first ring
+        // and the second ring-out falls through to a person — which is the
+        // phase's "retry once, then an advisor task", counted from the rows
+        // rather than from a flag somebody has to remember to clear.
+        const retryAt = new Date(this.clock.now().getTime() + outcome.retryAfterMinutes * 60_000);
+        await this.deferRung(rung, retryAt);
+        return {
+          outcome: 'DEFERRED',
+          detail: `Nobody answered; ringing again at ${retryAt.toISOString()}`,
+        };
+      }
+
+      if (!outcome.fallBackToAdvisor) {
+        return {
+          outcome: 'BLOCKED',
+          detail: `${outcome.refusalCode ?? 'REFUSED'}: ${outcome.refusalReason ?? 'the call gate refused'}`,
+        };
+      }
+    }
+
     const brief =
       card === null
         ? `Call the customer about approval ${approval.id}`
@@ -639,7 +747,7 @@ export class EscalationLadderEngine<Tx> {
         ladderKey: rung.ladderKey,
         rung: rung.rung,
         rungType: rung.rungType,
-        channel: channelForRung(rung.rungType),
+        channel: channelForRung(rung.rungType, { canPlaceCalls: this.canPlaceCalls }),
         label: rung.label,
         scheduledAt: until,
         queueJobId,
@@ -683,19 +791,25 @@ interface LadderSubject {
 }
 
 /**
- * What the rung actually used, as opposed to what it *is*.
+ * What the rung will actually use, as opposed to what it *is*.
  *
- * `VOICE_OR_ADVISOR` reports `HUMAN` here for as long as it raises an advisor
- * task, which is honest: no call was placed. Phase 5 changes this one function
- * and nothing else.
+ * `VOICE_OR_ADVISOR` reports `HUMAN` unless the deployment can place calls, at
+ * which point it reports `VOICE`. The parameter exists because the channel is
+ * written when the rung is *scheduled* — hours before it fires — so the honest
+ * answer is "what this deployment is able to do", not "what happened". What
+ * happened is on the call row and in the rung's own result detail.
  */
-export function channelForRung(type: EscalationRungType): 'WHATSAPP' | 'SMS' | 'VOICE' | 'HUMAN' {
+export function channelForRung(
+  type: EscalationRungType,
+  options: { readonly canPlaceCalls?: boolean } = {},
+): 'WHATSAPP' | 'SMS' | 'VOICE' | 'HUMAN' {
   switch (type) {
     case 'WHATSAPP':
       return 'WHATSAPP';
     case 'SMS':
       return 'SMS';
     case 'VOICE_OR_ADVISOR':
+      return options.canPlaceCalls === true ? 'VOICE' : 'HUMAN';
     case 'OWNER_DIGEST':
     case 'HUMAN':
       return 'HUMAN';

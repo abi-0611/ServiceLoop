@@ -36,6 +36,20 @@
       "when": 1786860237523,
       "tag": "0004_phase4_status_delivery_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788198954434,
+      "tag": "0005_phase5_voice",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788237901503,
+      "tag": "0006_phase6_retention_digest_analytics",
+      "breakpoints": true
     }
   ]
 }

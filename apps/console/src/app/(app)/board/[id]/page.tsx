@@ -3,6 +3,7 @@ import {
   EtaHistorySchema,
   formatPaise,
   JobCardDetailSchema,
+  NextVisitPromptListSchema,
   SessionSchema,
 } from '@serviceloop/shared';
 import Link from 'next/link';
@@ -43,9 +44,16 @@ export default async function JobCardPage({
   // Phase-4 reads, and a card that predates them is not an error: a shop that
   // upgraded mid-repair has cards with no ETA history and no invoice, and the
   // drawer should render them rather than 500.
-  const [eta, delivery, role] = await Promise.all([
+  const [eta, delivery, nextVisit, role] = await Promise.all([
     optional(() => serverApiFetch(`/status/eta?jobCardId=${id}`, EtaHistorySchema)),
     optional(() => serverApiFetch(`/delivery/summary?jobCardId=${id}`, DeliverySummarySchema)),
+    // Phase 6.2: work this customer deferred on an earlier visit. Read here
+    // rather than folded into the card DTO because it is a different question
+    // about a different aggregate, and a shop with retention switched off
+    // should not pay for the join on every card open.
+    optional(() =>
+      serverApiFetch(`/retention/next-visit/${id}`, NextVisitPromptListSchema),
+    ),
     currentRole(),
   ]);
 
@@ -80,6 +88,42 @@ export default async function JobCardPage({
           <p className="text-sm">{card.complaintText ?? 'None recorded.'}</p>
         </CardContent>
       </Card>
+
+      {nextVisit !== null && nextVisit.prompts.length > 0 && (
+        <Card data-testid="next-visit-prompt" className="border-amber-400/60 bg-amber-50/40">
+          <CardHeader>
+            <CardTitle>While it&rsquo;s here</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {card.customer.fullName} deferred this work on an earlier visit. The car is on the
+              floor now — the cheapest moment there will ever be to do it.
+            </p>
+            {nextVisit.prompts.map((prompt) => (
+              <div key={prompt.ledgerItemId} className="rounded-md border border-border bg-background p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium">{prompt.title}</p>
+                  <span className="text-sm tabular-nums">{formatPaise(prompt.amountPaise)}</span>
+                </div>
+                {prompt.technicianNote !== null && (
+                  <p className="mt-1 text-xs italic text-muted-foreground">
+                    &ldquo;{prompt.technicianNote}&rdquo;
+                  </p>
+                )}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  declined {new Date(prompt.declinedAt).toLocaleDateString()} ·{' '}
+                  {prompt.declineReason.replace(/_/g, ' ')}
+                  {prompt.repitchCount > 0 && ` · raised again ${prompt.repitchCount}×`}
+                </p>
+              </div>
+            ))}
+            <p className="text-xs text-muted-foreground">
+              Add it as a work item on this card if the customer agrees. Approving it here is what
+              records the recovery against the original decline.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <TransitionActions jobCardId={card.id} allowedEvents={card.allowedEvents} />
 

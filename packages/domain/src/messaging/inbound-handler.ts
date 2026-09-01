@@ -24,9 +24,17 @@ import {
   type ConversationStore,
   type CustomerLookup,
   type MessageStore,
+  type RetentionReplyPort,
   type SlotReplyPort,
   type TechnicianNotePort,
 } from './ports';
+import {
+  parseDigestClaim,
+  parseDocumentEnrolment,
+  parseFeedbackAction,
+  parseMarketingAction,
+  parseRepitchAction,
+} from './retention-actions';
 import {
   parseSlotAction,
   parseStatusAction,
@@ -140,6 +148,28 @@ export interface InboundHandlerDeps<Tx> {
   readonly technicianNotes?: TechnicianNotePort;
   /** The customer's pickup-slot tap (phase 4.7). */
   readonly slots?: SlotReplyPort;
+  /**
+   * The five phase-6 taps. Absent in a deployment with no retention module, in
+   * which case a tap is recognised and logged and nothing happens — which is
+   * the important half: without the parse it would reach the intake pipeline,
+   * and "Not interested" would become a draft job card.
+   */
+  readonly retention?: RetentionReplyPort;
+  /**
+   * Turns a *customer's* voice note into words (phase 6.4).
+   *
+   * Narrower than `TechnicianNotePort`, which is staff-only by design and must
+   * stay that way: a customer's voice note must never be read as an instruction
+   * to move a job card. All this one does is give a spoken feedback comment a
+   * transcript, so "the AC still isn't cold" reaches the advisor's recovery task
+   * as text rather than as an audio file nobody plays.
+   */
+  readonly transcribeVoiceNote?: (input: {
+    readonly shopId: string;
+    readonly bytes: Buffer;
+    readonly contentType: string;
+    readonly languageHint: Language;
+  }) => Promise<string | null>;
   /** Deep-link base for "Edit in console" replies. */
   readonly consoleUrl: string;
   readonly clock?: Clock;
@@ -553,6 +583,110 @@ export class InboundHandler<Tx> {
       });
     }
 
+    // Phase 6. All five checked before the draft actions, and all five before
+    // the fall-through: an unrecognised id is logged, but a *recognised*
+    // retention id that reached `parseDraftAction` would be a "Not interested"
+    // that opened a job card.
+    const repitch = parseRepitchAction(replyId);
+    if (repitch !== null) {
+      return this.applyRetentionTap({
+        ...args,
+        label: `Re-pitch answered: ${repitch.response}`,
+        run: (port, actor) =>
+          port.answerRepitch({
+            shopId: input.shopId,
+            ledgerItemId: repitch.ledgerItemId,
+            response: repitch.response,
+            conversationId: routed.conversationId,
+            customerId: routed.customerId,
+            actor,
+            traceId: input.traceId,
+          }),
+      });
+    }
+
+    const feedback = parseFeedbackAction(replyId);
+    if (feedback !== null) {
+      return this.applyRetentionTap({
+        ...args,
+        label: `Feedback: ${feedback.sentiment}`,
+        run: (port, actor) =>
+          port.answerFeedback({
+            shopId: input.shopId,
+            feedbackId: feedback.feedbackId,
+            sentiment: feedback.sentiment,
+            conversationId: routed.conversationId,
+            actor,
+            traceId: input.traceId,
+          }),
+      });
+    }
+
+    const enrolment = parseDocumentEnrolment(replyId);
+    if (enrolment !== null) {
+      const customerId = routed.customerId;
+      if (customerId === null) {
+        push({ stage: 'router', ok: false, detail: 'Document enrolment tapped by no customer' });
+        return { replies: [], draftId: null, jobCardId: null };
+      }
+      return this.applyRetentionTap({
+        ...args,
+        label: enrolment.enrol ? 'Document tracking enrolled' : 'Document tracking declined',
+        run: (port, actor) =>
+          port.answerDocumentEnrolment({
+            shopId: input.shopId,
+            vehicleId: enrolment.vehicleId,
+            customerId,
+            enrol: enrolment.enrol,
+            conversationId: routed.conversationId,
+            actor,
+            traceId: input.traceId,
+          }),
+      });
+    }
+
+    const marketing = parseMarketingAction(replyId);
+    if (marketing !== null) {
+      const customerId = routed.customerId;
+      if (customerId === null) {
+        push({ stage: 'consent', ok: false, detail: 'MARKETING tapped by no customer' });
+        return { replies: [], draftId: null, jobCardId: null };
+      }
+      return this.applyRetentionTap({
+        ...args,
+        stage: 'consent',
+        label: `MARKETING ${marketing === 'GRANT' ? 'granted' : 'declined'}`,
+        run: (port, actor) =>
+          port.answerMarketingConsent({
+            shopId: input.shopId,
+            customerId,
+            conversationId: routed.conversationId,
+            decision: marketing,
+            evidence: replyId,
+            actor,
+            traceId: input.traceId,
+          }),
+      });
+    }
+
+    const claimed = parseDigestClaim(replyId);
+    if (claimed !== null) {
+      return this.applyRetentionTap({
+        ...args,
+        stage: 'status',
+        label: 'Digest line claimed',
+        run: (port, actor) =>
+          port.claimDigestLine({
+            shopId: input.shopId,
+            approvalId: claimed,
+            claimedByStaffId: routed.senderStaffId,
+            conversationId: routed.conversationId,
+            actor,
+            traceId: input.traceId,
+          }),
+      });
+    }
+
     const action = parseDraftAction(replyId);
     if (action === null) {
       push({ stage: 'router', ok: true, detail: `Unrecognised reply id "${replyId}"` });
@@ -723,6 +857,61 @@ export class InboundHandler<Tx> {
    * — belongs to the delivery service, and this method's whole job is to name
    * which button was pressed.
    */
+  /**
+   * The one shape every phase-6 tap has (6.3–6.7).
+   *
+   * Each of the five parses to a different call on a different service, and all
+   * five then do exactly the same three things: refuse politely when the module
+   * is not wired, run the call, and put the outcome on the trace the console
+   * renders. Writing that out five times is how four of them end up with a
+   * slightly different failure message and the fifth with none.
+   *
+   * No reply is composed here. Every one of these services acknowledges through
+   * the gate itself, because the acknowledgement depends on what the service
+   * decided — "we will raise it again in about a month" is only true if the
+   * ledger item actually took the deferral.
+   */
+  private async applyRetentionTap(args: {
+    readonly input: HandleInboundInput;
+    readonly routed: RoutedMessage;
+    readonly push: (step: Omit<TraceStep, 'at'>) => void;
+    readonly label: string;
+    readonly stage?: TraceStep['stage'];
+    readonly run: (
+      port: RetentionReplyPort,
+      actor: Actor,
+    ) => Promise<{ readonly handled: boolean; readonly detail: string }>;
+  }): Promise<{
+    readonly replies: readonly GateOutcome[];
+    readonly draftId: string | null;
+    readonly jobCardId: string | null;
+  }> {
+    const { routed, push, label } = args;
+    const none = { replies: [] as GateOutcome[], draftId: null, jobCardId: null };
+    const stage = args.stage ?? 'router';
+    const port = this.deps.retention;
+
+    if (port === undefined) {
+      push({ stage, ok: false, detail: `${label}, but no retention module is wired` });
+      return none;
+    }
+
+    const actor: Actor =
+      routed.senderStaffId !== null
+        ? { type: 'STAFF', id: routed.senderStaffId }
+        : routed.customerId === null
+          ? SYSTEM_ACTOR
+          : { type: 'CUSTOMER', id: routed.customerId };
+
+    const result = await args.run(port, actor);
+    push({
+      stage,
+      ok: result.handled,
+      detail: result.handled ? label : `${label} — not applied: ${result.detail}`,
+    });
+    return none;
+  }
+
   private async applySlotChoice(args: {
     readonly bookingId: string;
     readonly slotIndex: number;
@@ -880,6 +1069,8 @@ export class InboundHandler<Tx> {
     readonly input: HandleInboundInput;
     readonly routed: RoutedMessage;
     readonly config: ShopConfig;
+    readonly media: FetchedMedia | null;
+    readonly mediaId: string | null;
     readonly push: (step: Omit<TraceStep, 'at'>) => void;
   }): Promise<{
     readonly replies: readonly GateOutcome[];
@@ -888,6 +1079,46 @@ export class InboundHandler<Tx> {
   }> {
     const { input, routed, config, push } = args;
     const none = { replies: [] as GateOutcome[], draftId: null, jobCardId: null };
+
+    // Phase 6.4: the sentence after the face. A customer who tapped 😞 and then
+    // typed (or spoke) why is answering the same question, and the recovery
+    // task an advisor picks up should carry their words rather than a shrug.
+    // Checked before everything else in this lane because it is the *narrowest*
+    // claim on the message: it applies only while that customer has an answered
+    // feedback record still open, and returns false otherwise.
+    if (routed.conversationKind !== 'STAFF_GROUP' && routed.customerId !== null) {
+      const attached = await this.tryFeedbackComment({ ...args, customerId: routed.customerId });
+      if (attached) return none;
+
+      // Phase 6.2: the answer to the odometer ask that rode along on the last
+      // re-pitch. Only a *bare* number is read this way, and only inside a
+      // fortnight of a touch actually reaching them — both guards live in the
+      // service, and both are why "4432" typed in a customer thread does not
+      // become a vehicle with 4,432 km on it.
+      const reading = await this.deps.retention?.recordVolunteeredOdometer({
+        shopId: input.shopId,
+        customerId: routed.customerId,
+        text: input.message.text,
+        messageId: routed.messageId,
+        actor: { type: 'CUSTOMER', id: routed.customerId },
+        traceId: input.traceId,
+      });
+      if (reading !== null && reading !== undefined) {
+        push({
+          stage: 'status',
+          ok: true,
+          detail: `Odometer noted: ${reading.odometerKm} km`,
+        });
+        const outcome = await this.send({
+          shopId: input.shopId,
+          routed,
+          content: { kind: 'text', body: t(routed.language, 'retention.odometer_ack') },
+          config,
+          traceId: input.traceId,
+        });
+        return { ...none, replies: [outcome] };
+      }
+    }
 
     // A typed line in the staff group — "4432 pads done" — is a status note as
     // much as a voice one is. This lane is otherwise dead: phase 2 routed staff
@@ -985,6 +1216,77 @@ export class InboundHandler<Tx> {
    * Either way the transcript comes back with the answer, so the voice note is
    * transcribed once however the fork goes.
    */
+  /**
+   * A comment following a feedback face (phase 6.4).
+   *
+   * Returns true when it took the message, and true is the end of the line for
+   * it: a customer explaining why the service went badly is not also opening a
+   * job card. That is the whole reason this sits above the intake fall-through
+   * rather than beside it.
+   *
+   * A voice note is transcribed when there is something to transcribe with, and
+   * kept as an audio reference either way — the words are for the advisor, the
+   * recording is what the customer actually sent.
+   */
+  private async tryFeedbackComment(args: {
+    readonly input: HandleInboundInput;
+    readonly routed: RoutedMessage;
+    readonly customerId: string;
+    readonly media: FetchedMedia | null;
+    readonly mediaId: string | null;
+    readonly push: (step: Omit<TraceStep, 'at'>) => void;
+  }): Promise<boolean> {
+    const { input, routed, customerId, media, push } = args;
+    const port = this.deps.retention;
+    if (port === undefined) return false;
+
+    const isVoiceNote = input.message.media !== null && input.message.media.kind === 'AUDIO';
+    const typed = input.message.text.length > 0 ? input.message.text : (input.message.caption ?? '');
+
+    let comment = typed.trim();
+    if (comment.length === 0 && isVoiceNote && media !== null) {
+      const transcribe = this.deps.transcribeVoiceNote;
+      if (transcribe !== undefined) {
+        try {
+          comment = (
+            await transcribe({
+              shopId: input.shopId,
+              bytes: media.bytes,
+              contentType: media.contentType,
+              languageHint: routed.language,
+            })
+          )?.trim() ?? '';
+        } catch (error) {
+          // A recogniser outage must not swallow the customer's complaint. The
+          // audio reference still reaches the record below.
+          push({ stage: 'status', ok: false, detail: `Could not transcribe: ${messageOf(error)}` });
+        }
+      }
+    }
+
+    if (comment.length === 0 && !isVoiceNote) return false;
+
+    const attached = await port.attachFeedbackComment({
+      shopId: input.shopId,
+      customerId,
+      comment,
+      viaVoiceNote: isVoiceNote,
+      mediaId: args.mediaId,
+      traceId: input.traceId,
+    });
+
+    if (attached) {
+      push({
+        stage: 'status',
+        ok: true,
+        detail: isVoiceNote
+          ? `Voice comment attached to this visit's feedback${comment.length === 0 ? ' (not transcribed)' : ''}`
+          : "Comment attached to this visit's feedback",
+      });
+    }
+    return attached;
+  }
+
   private async tryTechnicianNote(args: {
     readonly input: HandleInboundInput;
     readonly routed: RoutedMessage;

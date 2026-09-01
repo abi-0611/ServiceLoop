@@ -37,7 +37,7 @@ import {
 import { formatPaise, uuidv7 } from '@serviceloop/shared';
 import { sql } from 'drizzle-orm';
 import IORedis from 'ioredis';
-import { deterministicJudge } from '../personas/judge';
+import { deterministicJudge } from '@serviceloop/adapters';
 import { assert, assertEqual, ScenarioRunner } from '../runner';
 
 /**

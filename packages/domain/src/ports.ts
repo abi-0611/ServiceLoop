@@ -94,6 +94,17 @@ export interface WorkItemStore<Tx> {
       readonly kind: 'DECLINED' | 'DEFERRED';
       readonly reason: string;
       readonly followUpAfter: Date | null;
+      /**
+       * When the customer said no.
+       *
+       * Passed rather than left to the database's `now()`, because this instant
+       * is quoted back to that customer months later — "when we serviced your
+       * Swift in April" — and folded into the recovery cohort. A row whose
+       * declined-at came from the database clock while every event about it
+       * came from the domain clock is a row that disagrees with its own audit
+       * trail, and the message it produces is wrong in front of a customer.
+       */
+      readonly at: Date;
     },
   ): Promise<void>;
 }

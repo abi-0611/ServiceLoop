@@ -75,6 +75,18 @@ export interface RunRequest {
   readonly language: Language;
   readonly customerName: string;
   readonly actorId?: string | null;
+  /**
+   * Overrides the objective's spec for this run (phase 5.3).
+   *
+   * The voice runtime supplies the *same* objective with one tool swapped —
+   * `speak_to_caller` where a thread would use `send_customer_message` — and
+   * with the telephone paragraph appended to the instructions. Deriving it from
+   * the registered spec rather than registering a parallel set of voice
+   * objectives is what keeps a change to the approval objective reaching both
+   * channels; two copies would drift, and a shop would find the agent saying
+   * different things on the phone than in the thread.
+   */
+  readonly spec?: ObjectiveSpec;
 }
 
 export interface RunReport {
@@ -96,7 +108,7 @@ export class AgentRunner<Tx> {
   }
 
   async run(request: RunRequest): Promise<RunReport> {
-    const spec = objectiveSpec(request.objective);
+    const spec = request.spec ?? objectiveSpec(request.objective);
     const caps = request.config.agent;
     const runId = uuidv7();
     const startedAt = this.clock.now();

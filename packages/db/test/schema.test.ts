@@ -24,6 +24,10 @@ import {
   evidenceBundles,
   gatePasses,
   idempotencyKeys,
+  callConsentEvents,
+  callTurns,
+  callUsage,
+  calls,
   invoiceLines,
   invoices,
   jobCards,
@@ -431,18 +435,84 @@ describe('schema smoke', () => {
       expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000),
     });
 
+    /* --- phase 5: one telephone call, with its transcript and its bill --- */
+
+    const callId = uuidv7();
+    await db.insert(calls).values({
+      id: callId,
+      shopId: SHOP_ID,
+      direction: 'OUTBOUND',
+      status: 'COMPLETED',
+      driver: 'loopback',
+      providerCallSid: `loopback:${callId}`,
+      toEncrypted: '+919841100001',
+      toMasked: '••••0001',
+      fromNumber: '+911140000000',
+      jobCardId: base.jobCardId,
+      customerId: base.customerId,
+      objective: 'request_approval',
+      language: 'en',
+      outcome: 'DECISION_RECORDED',
+      endReason: 'OBJECTIVE_MET',
+      traceId: 'schema-smoke',
+      retentionUntil: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000),
+    });
+
+    await db.insert(callTurns).values({
+      shopId: SHOP_ID,
+      callId,
+      turnIndex: 0,
+      role: 'SYSTEM',
+      inputMode: 'NONE',
+      text: 'This is the ServiceLoop assistant. I am an AI assistant, not a person.',
+      mandatorySegment: true,
+      scriptKey: 'voice.disclosure',
+      languageTag: 'en-IN',
+      startedAt: new Date(),
+    });
+
+    // The notice, then the recorder — in that order, and the constraint at the
+    // foot of migration 0005 refuses a recording attached to a call whose
+    // consent events do not contain one.
+    for (const fact of ['AI_DISCLOSURE_PLAYED', 'RECORDING_NOTICE_PLAYED', 'RECORDING_STARTED'] as const) {
+      await db.insert(callConsentEvents).values({
+        shopId: SHOP_ID,
+        callId,
+        fact,
+        turnIndex: 0,
+        occurredAt: new Date(),
+      });
+    }
+
+    await db.insert(callUsage).values({
+      shopId: SHOP_ID,
+      callId,
+      telcoSeconds: 42,
+      sttSeconds: 18,
+      ttsSeconds: 24,
+      llmInputTokens: 1_800,
+      llmOutputTokens: 160,
+      estimatedCostPaise: 91,
+      traceId: 'schema-smoke',
+    });
+
     // Schema v1's 20 tables, plus the three phase 2 adds (`wa_templates`,
     // `job_card_drafts`, `merge_suggestions`), the five phase 3 adds
     // (`llm_usage`, `agent_runs`, `agent_steps`, `advisor_tasks`,
-    // `message_reviews`) and the nine phase 4 adds (`status_signals`,
+    // `message_reviews`), the nine phase 4 adds (`status_signals`,
     // `eta_entries`, `silent_bay_nudges`, `delivery_bookings`, `invoices`,
-    // `invoice_lines`, `payments`, `payment_events`, `gate_passes`). Counting
-    // rather than listing is deliberate — it catches a table added without a
-    // migration being noticed, which is exactly what it did on this phase.
+    // `invoice_lines`, `payments`, `payment_events`, `gate_passes`), the four
+    // phase 5 adds (`calls`, `call_turns`, `call_consent_events`,
+    // `call_usage`) and the nine phase 6 adds (`retention_touches`,
+    // `retention_holds`, `odometer_readings`, `feedback_requests`,
+    // `service_due_forecasts`, `vehicle_documents`, `owner_digests`,
+    // `exception_alerts`, `metric_rollups`). Counting rather than listing is
+    // deliberate — it catches a table added without a migration being noticed,
+    // which is exactly what it did on phase 4.
     const tables = await db.execute<{ count: number }>(sql`
       select count(*)::int as count from information_schema.tables where table_schema = 'public'
     `);
-    expect(Number(tables.rows[0]?.count ?? 0)).toBe(37);
+    expect(Number(tables.rows[0]?.count ?? 0)).toBe(50);
   });
 
   it('enforces the per-shop unique registration index', async () => {

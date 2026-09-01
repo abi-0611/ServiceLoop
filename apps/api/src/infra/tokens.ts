@@ -37,3 +37,29 @@ export const AGENT_RUNTIME = Symbol('serviceloop.agentRuntime');
  * every controller — the same reasoning as `AGENT_RUNTIME`.
  */
 export const LOOP_RUNTIME = Symbol('serviceloop.loopRuntime');
+
+/* --- Phase 5: voice ------------------------------------------------------ */
+/**
+ * One telephony port in the process, chosen by `selectAdapters`.
+ *
+ * The console's softphone drives it directly, which is only sound because the
+ * loopback adapter *is* an adapter: a controller holding this token cannot tell
+ * whether the far end is a browser tab or a telephone.
+ */
+export const VOICE_TELEPHONY = Symbol('serviceloop.voiceTelephony');
+/** The gate every origination passes, and the rows it writes either way. */
+export const VOICE_CALLS = Symbol('serviceloop.voiceCalls');
+/** `VoiceAgentRunner`: the phase-3 agent, on a telephone. */
+export const VOICE_RUNTIME = Symbol('serviceloop.voiceRuntime');
+
+/* --- Phase 6: retention, digest & analytics ------------------------------ */
+/**
+ * Every phase-6 service, assembled once by `createRetentionRuntime`.
+ *
+ * Lives in `MessagingModule` rather than in its own module for one structural
+ * reason: `InboundHandler` needs it, because the ledger's one-tap answers, the
+ * feedback faces and the MARKETING ask all arrive as inbound taps. Building it
+ * beside the handler is what keeps the module graph acyclic; the controllers
+ * that read it live in `RetentionModule`, which imports this one.
+ */
+export const RETENTION_RUNTIME = Symbol('serviceloop.retentionRuntime');

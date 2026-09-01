@@ -16,7 +16,9 @@ const NAV: ReadonlyArray<{ href: string; label: string; demoOnly?: boolean }> = 
   { href: '/status', label: 'Status signals' },
   { href: '/intake', label: 'Intake' },
   { href: '/gate', label: 'Gate' },
+  { href: '/analytics', label: 'Analytics' },
   { href: '/sandbox', label: 'Sandbox', demoOnly: true },
+  { href: '/softphone', label: 'Softphone', demoOnly: true },
   { href: '/settings/guardrails', label: 'Guardrails' },
 ];
 

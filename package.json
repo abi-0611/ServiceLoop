@@ -28,7 +28,11 @@
     "infra:reset": "docker compose --project-directory . -f infra/compose.yaml down -v",
     "sim": "pnpm --filter @serviceloop/simulator run sim",
     "demo:phase3": "pnpm --filter @serviceloop/simulator run demo:phase3",
-    "demo:phase4": "pnpm --filter @serviceloop/simulator run demo:phase4"
+    "demo:phase4": "pnpm --filter @serviceloop/simulator run demo:phase4",
+    "sim:voice": "pnpm --filter @serviceloop/simulator run sim:voice",
+    "demo:phase5": "pnpm --filter @serviceloop/simulator run demo:phase5",
+    "metrics:recompute": "pnpm --filter @serviceloop/db run metrics:recompute",
+    "demo:phase6": "pnpm --filter @serviceloop/simulator run demo:phase6"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

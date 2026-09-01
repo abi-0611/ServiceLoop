@@ -1,12 +1,16 @@
-import { SandboxLlmAdapter, type LlmRequest, type LlmResponder } from '@serviceloop/adapters';
+import type { LlmRequest } from './port';
+import { SandboxLlmAdapter, type LlmResponder } from './sandbox-adapter';
 
 /**
- * A deterministic claim judge, for the simulator and the phase-3 demo.
+ * A deterministic claim judge, for every deployment without a model key.
  *
  * The real judge is a `JUDGE`-class model reading {claim, source} pairs in
- * prose. Without a credential that is not available, and a judge that cleared
- * everything would make the checker's third layer decorative — so this one does
- * the two checks a model reliably gets right and a regex can also get right:
+ * prose. Without a credential that is not available, and the checker fails
+ * closed — so a sandbox with no judge at all is a sandbox where nothing can
+ * ever be said, which is not a useful thing to develop against. A judge that
+ * cleared everything would be worse: it would make the checker's third layer
+ * decorative. So this one does the two checks a model reliably gets right and a
+ * regex can also get right:
  *
  *   - a **number** in the claim that the source does not state;
  *   - a **part** the claim names that the source never mentions.
@@ -14,6 +18,11 @@ import { SandboxLlmAdapter, type LlmRequest, type LlmResponder } from '@servicel
  * Those are the two failure shapes the red-team suite exercises, and they are
  * the ones a fabricated diagnosis takes. Everything subtler is the live model's
  * job, and `post-checker.test.ts` covers the structural layers exhaustively.
+ *
+ * It lives here rather than beside the persona suite because four things now
+ * need it — the persona suite, the phase-3 and phase-4 demos, the voice tests
+ * and `sim:voice` — and a judge that differs between the suite that proves a
+ * flow and the demo that shows it is a judge proving nothing.
  */
 
 const PARTS = [

@@ -162,6 +162,52 @@ back rather than improvising a request.`,
     metWhen: ['send_customer_message'],
     tools: [...SHARED_TOOLS],
   },
+
+  repitch_declined_item: {
+    key: 'repitch_declined_item',
+    title: 'Pick up a conversation about work the customer already declined',
+    instructions: `Months ago, on a visit that is over, a technician flagged something and the
+customer decided against it. The re-pitch itself has already been sent — it is
+composed from the ledger's frozen record of what the technician wrote and what
+the estimate charged, not by you. You are here because the customer replied to
+it with something other than a tap.
+
+Your job is continuity of care, and the whole objective is defined by what you
+may **not** do:
+
+  - **No new claim about the vehicle.** You have not seen this car since the
+    visit in question. The only thing you know about its condition is what the
+    technician wrote then, and you may restate that and nothing else. If they
+    ask "is it worse now?", the honest answer is that nobody has looked, and
+    offering an inspection is the useful one.
+  - **No new urgency.** Time has passed; that is a fact about the calendar, not
+    about the brakes. "It has been six months" is true. "It will fail soon" is
+    an invention, and inventing urgency is a banned behaviour (master §6).
+  - **No new price.** The estimate they were given is the estimate. If the
+    shop's list price has moved, the message they received already says so and
+    states both numbers — do not improvise a third.
+  - **No pressure of any kind.** They said no once. A customer who says no again
+    is answering the question, and "Not interested" must be recorded and
+    honoured for ever, not argued with.
+
+What you may do: answer a question from the original evidence, accept a
+deferral gracefully and record it, or hand off to a person. If they want to
+book, say the advisor will arrange a time — you do not hold the diary.
+
+One message, then stop.`,
+    /**
+     * No `record_customer_decision` here, and its absence is the objective.
+     *
+     * A decision about *this* work belongs to a fresh approval flow on a fresh
+     * visit, where the estimate is current and the guardrails around price are
+     * live. An agent that could convert a re-pitch straight into an approval
+     * would be spending a customer's money against an estimate written in
+     * April. Booking is what a re-pitch converts into; the money is decided
+     * when the car is back on the ramp.
+     */
+    metWhen: ['send_customer_message', 'handoff_to_human'],
+    tools: [...SHARED_TOOLS],
+  },
 };
 
 export function objectiveSpec(objective: AgentObjective): ObjectiveSpec {

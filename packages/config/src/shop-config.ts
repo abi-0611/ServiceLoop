@@ -1,8 +1,11 @@
 import {
+  ALERT_KINDS,
+  AlertKindSchema,
   AutonomyLevelSchema,
   EscalationRungTypeSchema,
   HhMmSchema,
   LanguageSchema,
+  MmDdSchema,
   OBJECTIVES,
   TimeZoneSchema,
   WorkingWindowSchema,
@@ -24,12 +27,16 @@ import { z } from 'zod';
  * v2 (phase 2) adds the `messaging`, `intake` and `consent` blocks. v3 (phase 3)
  * adds `agent` and re-expresses ladder rungs as a *type* rather than a channel.
  * v4 (phase 4) adds `workingHours`, `eta`, `statusComms`, `delivery` and
- * `invoice`, and widens `payments` past the single ordering flag.
+ * `invoice`, and widens `payments` past the single ordering flag. v5 (phase 5)
+ * adds `voice`, with every switch in it off. v6 (phase 6) adds `retention`,
+ * `feedback`, `digest`, `alerts` and `analytics` — the retention engine off,
+ * the digest on, because a brief nobody asked for goes to the owner's own
+ * number and a re-pitch goes to a customer's.
  * Stored documents are migrated forward on read by `migrateShopConfig`, merging
  * the conservative defaults below — an absent field can only ever become more
  * restrictive, never less.
  */
-export const SHOP_CONFIG_VERSION = 4 as const;
+export const SHOP_CONFIG_VERSION = 6 as const;
 
 export const EscalationRungSchema = z.object({
   /** Minutes after the objective opened (not after the previous rung). */
@@ -296,6 +303,293 @@ export const InvoiceConfigSchema = z
   });
 export type InvoiceConfig = z.infer<typeof InvoiceConfigSchema>;
 
+/**
+ * Voice behaviour and its brakes (phase 5).
+ *
+ * Two things live here that look like duplicates of the environment and are
+ * not. `enabled` is the shop's own switch — an owner who does not want the
+ * agent phoning their customers turns it off without anybody deploying
+ * anything — while `VOICE_KILL_SWITCH` is the platform's. Either alone stops a
+ * call, which is the correct shape for a brake: you never want the two parties
+ * who can stop something to have to agree.
+ *
+ * `dailyCostCapPaise` is the same story at the level of money. A shop that has
+ * spent its day's budget stops originating and starts raising advisor tasks —
+ * the loop degrades to what it did in phase 3 rather than to silence.
+ */
+export const VoiceConfigSchema = z
+  .object({
+    /** The shop's own switch. New shops start with voice off (§6: L0 first). */
+    enabled: z.boolean(),
+    /**
+     * Outbound rungs may place calls. Off means `VOICE_OR_ADVISOR` keeps
+     * raising advisor tasks — the phase-3 behaviour, deliberately reachable.
+     */
+    outboundEnabled: z.boolean(),
+    /** The published line answers. Independent of outbound, because the risk is. */
+    inboundEnabled: z.boolean(),
+    /** One retry on no-answer, then the ladder falls to a person (phase 5.4a). */
+    retryOnNoAnswer: z.boolean(),
+    retryAfterMinutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(60 * 24),
+    /** Per-customer ceiling. A shop cannot ring the same person all afternoon. */
+    maxCallsPerCustomerPerDay: z.number().int().min(1).max(10),
+    /** Per-shop ceiling on originations, regardless of cost. */
+    maxOutboundCallsPerDay: z.number().int().min(1).max(500),
+    /** Money brake. Breaching alerts, then halts new originations. */
+    dailyCostCapPaise: z
+      .number()
+      .int()
+      .min(0)
+      .max(100_000_000),
+    /** Recording + transcript retention. Phase 7 wires the deletion cascade. */
+    recordingRetentionDays: z.number().int().min(1).max(3650),
+    /**
+     * Two consecutive low-confidence turns drop the call into pure IVR
+     * (phase 5.5). Below this, the recogniser is guessing.
+     */
+    minTranscriptConfidence: z.number().min(0).max(1),
+    poorTurnsBeforeIvr: z.number().int().min(1).max(5),
+    /** Agent turns before the graceful "I'll have Kumar sir call you" exit. */
+    maxTurnsPerCall: z.number().int().min(2).max(40),
+    maxCallSeconds: z
+      .number()
+      .int()
+      .min(30)
+      .max(30 * 60),
+    /** Speech-end to speech-start. Breaching it does not end the call; it fills. */
+    latencyBudgetMs: z.number().int().min(200).max(10_000),
+    /** A turn may be at most this many sentences. Voice composition policy (5.3). */
+    maxSentencesPerTurn: z.number().int().min(1).max(4),
+    /**
+     * A decision may not be recorded from a call until the agent has read the
+     * work and the amount back and the caller has agreed to *that*.
+     *
+     * A literal, not a boolean: this is the guardrail that stops a mis-heard
+     * "sari" from spending somebody's money, and no shop configuration may
+     * switch it off (§6, §10).
+     */
+    requireReadbackBeforeDecision: z.literal(true),
+  })
+  .refine((value) => !value.outboundEnabled || value.enabled, {
+    message: 'outboundEnabled requires enabled',
+    path: ['outboundEnabled'],
+  })
+  .refine((value) => !value.inboundEnabled || value.enabled, {
+    message: 'inboundEnabled requires enabled',
+    path: ['inboundEnabled'],
+  });
+export type VoiceConfig = z.infer<typeof VoiceConfigSchema>;
+
+/* -------------------------------------------------------------------------- *
+ * Phase 6 — retention, feedback, digest & analytics
+ * -------------------------------------------------------------------------- */
+
+/**
+ * A seasonal window that wakes ledger items tagged for it (phase 6.2).
+ *
+ * `MM-DD` with no year, and a window that wraps the year end is expected rather
+ * than an edge case — a shop in the north tags underbody work for a winter that
+ * starts in November and ends in February.
+ */
+export const SeasonWindowSchema = z.object({
+  key: z.string().min(1).max(24),
+  start: MmDdSchema,
+  end: MmDdSchema,
+  /** Ledger trigger tags this window fires, e.g. `["season:monsoon"]`. */
+  tags: z.array(z.string().min(1).max(48)).min(1).max(8),
+});
+export type SeasonWindow = z.infer<typeof SeasonWindowSchema>;
+
+/** The lapsed-customer win-back (phase 6.10). */
+export const WinBackConfigSchema = z.object({
+  enabled: z.boolean(),
+  /** No visit in this many months makes a customer lapsed. */
+  afterMonths: z.number().int().min(1).max(60),
+  /** A lapsed customer hears from us at most once in this many months. */
+  cooldownMonths: z.number().int().min(1).max(60),
+});
+export type WinBackConfig = z.infer<typeof WinBackConfigSchema>;
+
+/** The service-due engine (phase 6.5). */
+export const ServiceDueConfigSchema = z.object({
+  enabled: z.boolean(),
+  /** Shop default between services when the vehicle's own history says nothing. */
+  intervalDays: z.number().int().min(30).max(1095),
+  /** Used instead of the calendar when the customer has volunteered readings. */
+  intervalKm: z.number().int().min(1000).max(50_000),
+  /**
+   * Days before the due window a reminder goes out. The phase asks for T-7 and
+   * T-1; a shop may shorten the list but not lengthen it past three, because
+   * four reminders about one service is the shape of a nuisance.
+   */
+  leadDays: z.array(z.number().int().min(0).max(90)).min(1).max(3),
+});
+export type ServiceDueConfig = z.infer<typeof ServiceDueConfigSchema>;
+
+/**
+ * Document-expiry tracking (phase 6.5).
+ *
+ * Enrolment is per customer and explicit; this block only says *when* an
+ * enrolled customer hears, never *whether*. A shop that has a customer's
+ * insurance date because it saw the papers has not thereby been asked to remind
+ * them about it, and no configuration here can make it so.
+ */
+export const DocumentReminderConfigSchema = z.object({
+  enabled: z.boolean(),
+  leadDays: z.number().int().min(1).max(90),
+});
+export type DocumentReminderConfig = z.infer<typeof DocumentReminderConfigSchema>;
+
+/**
+ * The retention engine (phase 6.1–6.3, 6.10).
+ *
+ * `enabled` is off for a new shop, like every other switch that can put a
+ * message in front of a customer. The two numbers below it are the ones that
+ * make retention care rather than spam, and both are enforced *below* the
+ * composer: `maxRepitchesPerItem` by the ledger service and a database CHECK,
+ * `minDaysBetweenTouches` by the OutboundGate's frequency layer — so a new
+ * retention flow written next year inherits them without knowing they exist.
+ */
+export const RetentionConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    /** The floor between *any* two retention touches to one customer. */
+    minDaysBetweenTouches: z.number().int().min(1).max(365),
+    /** Hard cap per ledger item. Two, and the phase says two. */
+    maxRepitchesPerItem: z.number().int().min(0).max(3),
+    /** "Remind me later" pushes the horizon out by this much and counts as one. */
+    remindLaterDays: z.number().int().min(1).max(365),
+    /**
+     * Follow-up horizon in days by shop-KB category — the phase's own numbers:
+     * brake wear 60–90 days, tyres 90, cosmetic never.
+     *
+     * `null` means "never re-pitch on the clock". Such an item still exists in
+     * the ledger and still surfaces on the customer's next visit, which is the
+     * cheapest conversion moment and the one that costs the customer nothing.
+     */
+    horizonDaysByCategory: z.record(
+      z.string().min(1).max(48),
+      z.number().int().min(1).max(1095).nullable(),
+    ),
+    /** Applied to an item whose category the shop has no rule for. */
+    defaultHorizonDays: z.number().int().min(1).max(1095).nullable(),
+    seasons: z.array(SeasonWindowSchema).max(4),
+    /** The "while it's here" prompt in the advisor's card drawer (6.2). */
+    nextVisitPromptEnabled: z.boolean(),
+    /**
+     * Whether a light "how many km now?" may ride along on another touchpoint.
+     *
+     * Never a standalone message — the phase is explicit, and the composer has
+     * no path that sends one. This switch only governs the piggyback.
+     */
+    odometerAskEnabled: z.boolean(),
+    /** Kilometres since the visit that wake an `odometer:+N` tagged item. */
+    odometerTriggerKm: z.number().int().min(500).max(50_000),
+    winBack: WinBackConfigSchema,
+    serviceDue: ServiceDueConfigSchema,
+    documents: DocumentReminderConfigSchema,
+  })
+  .refine((value) => value.winBack.cooldownMonths >= 1, {
+    message: 'A win-back cooldown of zero would let a lapsed customer be pitched repeatedly',
+    path: ['winBack', 'cooldownMonths'],
+  });
+export type RetentionConfig = z.infer<typeof RetentionConfigSchema>;
+
+/**
+ * Post-service feedback, review routing and service recovery (phase 6.4).
+ *
+ * Two literals here rather than booleans, for the same reason
+ * `requireReadbackBeforeDecision` is one: an owner who could switch off the
+ * realtime alert on a bad review, or switch off the retention freeze that
+ * follows it, would be configuring the system to keep selling to somebody it
+ * has just upset. Neither is a preference.
+ */
+export const FeedbackConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    /** Hours after DELIVERED before the ask. The phase's window is 24–48. */
+    askAfterHours: z.number().int().min(1).max(168),
+    /** One reminder, or none. Null means the ask is asked once. */
+    reminderAfterHours: z.number().int().min(1).max(336).nullable(),
+    /** The ask stops waiting for an answer after this long. */
+    expireAfterHours: z.number().int().min(2).max(720),
+    /** The shop's Google Place review link. Null until an owner pastes one in. */
+    reviewLink: z.string().url().max(500).nullable(),
+    askForReviewOnPositive: z.boolean(),
+    /** Negative feedback interrupts the owner immediately, never in the digest. */
+    alertOwnerOnNegative: z.literal(true),
+    /** And freezes every retention touch until the recovery task is closed. */
+    freezeRetentionOnNegative: z.literal(true),
+  })
+  .refine((value) => !value.askForReviewOnPositive || value.reviewLink !== null, {
+    // A review ask with no link is a message that asks somebody for a favour
+    // and then does not say how to do it.
+    message: 'askForReviewOnPositive requires a reviewLink',
+    path: ['reviewLink'],
+  });
+export type FeedbackConfig = z.infer<typeof FeedbackConfigSchema>;
+
+/** The evening owner brief (phase 6.7). */
+export const DigestConfigSchema = z.object({
+  enabled: z.boolean(),
+  /** Shop-local wall clock. 20:30 IST is the default the phase names. */
+  dailyAt: HhMmSchema,
+  includeWeekly: z.boolean(),
+  /** 0 = Sunday. The weekly edition rides the daily slot on that day. */
+  weeklyOn: z.number().int().min(0).max(6),
+  /** Longest list of stuck approvals the brief will print before it summarises. */
+  maxApprovalLines: z.number().int().min(1).max(10),
+});
+export type DigestConfig = z.infer<typeof DigestConfigSchema>;
+
+/**
+ * Realtime exception alerts (phase 6.8).
+ *
+ * `approvalStuckHours` lives here rather than in `digest` even though both use
+ * it, because it is one threshold and having two would let a shop configure a
+ * digest that lists approvals its alert stream has not mentioned.
+ */
+export const AlertsConfigSchema = z.object({
+  enabled: z.boolean(),
+  approvalStuckHours: z.number().min(0.25).max(72),
+  /** Consecutive failed payment attempts before the owner hears. */
+  paymentFailuresBeforeAlert: z.number().int().min(1).max(5),
+  /**
+   * Which alerts may wake an owner during quiet hours.
+   *
+   * An override of the customer-protection rule, and therefore per-kind and
+   * explicit: an owner is not a customer, but they are still a person asleep at
+   * 23:00, and "everything is critical" is how an alert stream gets muted.
+   */
+  quietHoursOverride: z.array(AlertKindSchema).max(ALERT_KINDS.length),
+});
+export type AlertsConfig = z.infer<typeof AlertsConfigSchema>;
+
+/**
+ * Windows the KPI rollups are computed over (phase 6.9).
+ *
+ * Configuration rather than constants because they are *claims*: "recovery rate
+ * over a 90-day cohort" is a number a shop quotes, and a shop whose brake work
+ * is pitched on a 120-day horizon needs the cohort to be longer than its own
+ * horizon or the rate is structurally understated.
+ */
+export const AnalyticsConfigSchema = z
+  .object({
+    recoveryCohortDays: z.number().int().min(7).max(730),
+    repeatVisitWindowDays: z.number().int().min(30).max(1095),
+    /** How far back a `recompute --from` will go without being asked twice. */
+    maxBackfillDays: z.number().int().min(1).max(1095),
+  })
+  .refine((value) => value.maxBackfillDays >= value.recoveryCohortDays, {
+    message: 'A backfill shorter than the recovery cohort cannot reproduce the recovery rate',
+    path: ['maxBackfillDays'],
+  });
+export type AnalyticsConfig = z.infer<typeof AnalyticsConfigSchema>;
+
 export const DisclosureConfigSchema = z.object({
   /**
    * Non-negotiable (master §6). Modelled as a literal so no patch, prompt, or
@@ -428,6 +722,12 @@ export const ShopConfigSchema = z.object({
   statusComms: StatusCommsConfigSchema,
   delivery: DeliveryConfigSchema,
   invoice: InvoiceConfigSchema,
+  voice: VoiceConfigSchema,
+  retention: RetentionConfigSchema,
+  feedback: FeedbackConfigSchema,
+  digest: DigestConfigSchema,
+  alerts: AlertsConfigSchema,
+  analytics: AnalyticsConfigSchema,
 });
 
 export type ShopConfig = z.infer<typeof ShopConfigSchema>;
@@ -614,6 +914,114 @@ export function defaultShopConfig(timezone = 'Asia/Kolkata'): ShopConfig {
       numberPrefix: 'INV',
       footerNote: '',
       includeEvidenceAppendix: true,
+    },
+    voice: {
+      // Every switch off. A shop that has never heard the agent speak on
+      // WhatsApp has no business letting it speak on the phone, and the owner
+      // is the one who decides otherwise — the same reasoning as L0 autonomy.
+      enabled: false,
+      outboundEnabled: false,
+      inboundEnabled: false,
+      retryOnNoAnswer: true,
+      retryAfterMinutes: 20,
+      maxCallsPerCustomerPerDay: 2,
+      maxOutboundCallsPerDay: 50,
+      // ₹500 a day. Roughly eighty three-minute calls at the default estimates,
+      // which is a busy shop's whole approval board and then some.
+      dailyCostCapPaise: 50_000,
+      recordingRetentionDays: 180,
+      minTranscriptConfidence: 0.6,
+      poorTurnsBeforeIvr: 2,
+      maxTurnsPerCall: 12,
+      maxCallSeconds: 240,
+      latencyBudgetMs: 1_200,
+      maxSentencesPerTurn: 2,
+      requireReadbackBeforeDecision: true,
+    },
+    retention: {
+      // Off, like every other switch that can put a message in front of a
+      // customer who did not just write to us. The ledger still fills up from
+      // the moment a shop declines its first work item — turning this on later
+      // finds a year of deferred work waiting, which is the point.
+      enabled: false,
+      // The phase's own floor. Three weeks between any two retention touches is
+      // the difference between a workshop that remembers you and one that
+      // markets at you.
+      minDaysBetweenTouches: 21,
+      maxRepitchesPerItem: 2,
+      remindLaterDays: 30,
+      // The phase's numbers: brake wear 60–90 days (75 is the middle), tyres
+      // 90, cosmetic never. Keys are shop-KB categories, so a shop that names
+      // its categories differently edits this map rather than the code.
+      horizonDaysByCategory: {
+        brakes: 75,
+        tyres: 90,
+        suspension: 120,
+        battery: 180,
+        wipers: 120,
+        underbody: 180,
+        ac: 150,
+        cosmetic: null,
+      },
+      // Null: an uncategorised item is not re-pitched on a timer at all. It
+      // still surfaces on the next visit, which costs the customer nothing.
+      defaultHorizonDays: null,
+      seasons: [
+        // The south-west and north-east monsoons, which between them cover the
+        // two windows an Indian workshop's wiper and brake work actually sells.
+        { key: 'monsoon', start: '05-25', end: '07-15', tags: ['season:monsoon'] },
+        { key: 'monsoon_ne', start: '10-01', end: '12-15', tags: ['season:monsoon'] },
+      ],
+      nextVisitPromptEnabled: true,
+      odometerAskEnabled: true,
+      odometerTriggerKm: 3_000,
+      winBack: { enabled: false, afterMonths: 8, cooldownMonths: 6 },
+      serviceDue: {
+        enabled: false,
+        intervalDays: 180,
+        intervalKm: 10_000,
+        leadDays: [7, 1],
+      },
+      documents: { enabled: false, leadDays: 15 },
+    },
+    feedback: {
+      enabled: false,
+      askAfterHours: 24,
+      reminderAfterHours: 24,
+      expireAfterHours: 72,
+      // Null rather than a placeholder, for the reason `invoice.gstin` is: a
+      // review link pointing at the wrong shop sends a customer's goodwill to
+      // somebody else.
+      reviewLink: null,
+      askForReviewOnPositive: false,
+      alertOwnerOnNegative: true,
+      freezeRetentionOnNegative: true,
+    },
+    digest: {
+      // On by default — the one phase-6 switch that is. A digest goes to the
+      // owner's own number about their own shop; there is no customer to
+      // protect and nothing for an owner to opt into before being told how
+      // their day went.
+      enabled: true,
+      dailyAt: '20:30',
+      includeWeekly: true,
+      weeklyOn: 0,
+      maxApprovalLines: 5,
+    },
+    alerts: {
+      enabled: true,
+      approvalStuckHours: 2,
+      paymentFailuresBeforeAlert: 2,
+      // Two of the five. A negative review at 22:00 is worth an owner's evening
+      // because the recovery window is hours long; a voice kill switch is worth
+      // it because the shop's telephone has stopped working. The other three
+      // keep until morning.
+      quietHoursOverride: ['NEGATIVE_FEEDBACK', 'VOICE_KILL_SWITCH'],
+    },
+    analytics: {
+      recoveryCohortDays: 90,
+      repeatVisitWindowDays: 180,
+      maxBackfillDays: 400,
     },
   });
 }

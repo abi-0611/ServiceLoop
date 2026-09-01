@@ -24,6 +24,15 @@ const ALLOWED_PREFIXES = [
   'status',
   'delivery',
   'gate-pass',
+  // Phase 5: the softphone's handset and the console's call list. One prefix
+  // covers both `voice/softphone/...` and `voice/calls/...`, which is the whole
+  // of the voice surface the browser is allowed to reach.
+  'voice',
+  // Phase 6: the analytics export and the owner's "check these numbers", plus
+  // the card drawer's next-visit prompt. The read pages are server components
+  // and do not come through here; these three are the browser-side calls.
+  'analytics',
+  'retention',
 ] as const;
 
 /** Statuses the fetch spec forbids a body on. */
@@ -79,11 +88,15 @@ async function forward(
 
   // Media is bytes, not JSON: streaming it through `text()` would corrupt it.
   if (!contentType.includes('json')) {
+    // `content-disposition` travels too, or the analytics CSV export renders
+    // as a wall of text in the tab instead of saving with its filename.
+    const disposition = upstream.headers.get('content-disposition');
     return new NextResponse(await upstream.arrayBuffer(), {
       status: upstream.status,
       headers: {
         'content-type': contentType,
         'cache-control': upstream.headers.get('cache-control') ?? 'private, max-age=3600',
+        ...(disposition === null ? {} : { 'content-disposition': disposition }),
       },
     });
   }

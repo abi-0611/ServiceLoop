@@ -20,7 +20,8 @@
     "db:seed": "tsx src/cli/seed.ts",
     "test:unit": "vitest run src",
     "test": "vitest run",
-    "test:integration": "vitest run test"
+    "test:integration": "vitest run test",
+    "metrics:recompute": "tsx src/cli/recompute.ts"
   },
   "dependencies": {
     "@serviceloop/adapters": "workspace:*",

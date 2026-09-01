@@ -16,6 +16,23 @@ export {
 } from './approval-actions';
 
 export {
+  DIGEST_ACTION_IDS,
+  DOCUMENT_ACTION_IDS,
+  FEEDBACK_ACTION_IDS,
+  MARKETING_ACTION_IDS,
+  REPITCH_ACTION_IDS,
+  documentLabelKey,
+  parseDigestClaim,
+  parseDocumentEnrolment,
+  parseFeedbackAction,
+  parseMarketingAction,
+  parseRepitchAction,
+  type ParsedDocumentEnrolment,
+  type ParsedFeedbackAction,
+  type ParsedRepitchAction,
+} from './retention-actions';
+
+export {
   SLOT_ACTION_IDS,
   STATUS_ACTION_IDS,
   parseSlotAction,
@@ -122,6 +139,9 @@ export type {
   CustomerLookup,
   InsertMessageInput,
   MessageStore,
+  RetentionFrequencyReader,
+  RetentionGateFacts,
+  RetentionReplyPort,
   ScheduledMessage,
   SlotReplyPort,
   StatusTapInput,

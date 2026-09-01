@@ -76,6 +76,46 @@ const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
     ...deepMerge(defaultShopConfig(timezone) as unknown as PlainObject, document),
     configVersion: 4,
   }),
+  /**
+   * v4 → v5 (phase 5): adds the `voice` block.
+   *
+   * Purely additive, and every default in it is off — which is the whole point.
+   * A shop that upgrades into a build with telephony must not discover it by
+   * a customer being phoned. The owner turns voice on deliberately, in the
+   * console, and that write is audited like every other guardrail change.
+   */
+  4: (document, timezone) => ({
+    ...deepMerge(defaultShopConfig(timezone) as unknown as PlainObject, document),
+    configVersion: 5,
+  }),
+  /**
+   * v5 → v6 (phase 6): adds `retention`, `feedback`, `digest`, `alerts` and
+   * `analytics`.
+   *
+   * Additive, and the split between what arrives on and what arrives off is the
+   * whole content of this step. `retention` and `feedback` arrive **off**: both
+   * put messages in front of customers, and a shop must not discover an upgrade
+   * by one of its customers being re-pitched. `digest` and `alerts` arrive
+   * **on**, because both write to the shop's own staff, about the shop's own
+   * work — there is no customer to protect, and an owner who upgrades into a
+   * build that can tell them their day went badly should be told.
+   *
+   * `feedback.reviewLink` stays null rather than being guessed from the shop
+   * record, for the reason `invoice.gstin` does: a link that points at the wrong
+   * business sends a customer's goodwill to somebody else.
+   *
+   * One thing a deep-merge would get wrong if it were left to chance, and does
+   * not: `retention.horizonDaysByCategory` is a record, so `deepMerge` unions a
+   * shop's own categories with the defaults rather than replacing either. A shop
+   * that has never seen this block gets the defaults; a shop whose document
+   * somehow carries one category keeps it *and* gains the rest, which is the
+   * conservative direction — more categories means more items with a horizon,
+   * and every one of them still has to pass the gate.
+   */
+  5: (document, timezone) => ({
+    ...deepMerge(defaultShopConfig(timezone) as unknown as PlainObject, document),
+    configVersion: 6,
+  }),
 };
 
 const RUNG_TYPE_BY_LEGACY_CHANNEL: Readonly<Record<string, EscalationRungType>> = {

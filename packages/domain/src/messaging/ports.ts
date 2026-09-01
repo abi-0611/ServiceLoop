@@ -5,10 +5,12 @@ import type {
   ConsentStatus,
   ConversationCategory,
   ConversationKind,
+  FeedbackSentiment,
   Language,
   MediaKind,
   MessageKind,
   MessageStatus,
+  RepitchResponse,
 } from '@serviceloop/shared';
 import type { Actor } from '../job-card/context';
 import type { CaptureOutcome, ParsedStatusSignal } from '../status/types';
@@ -452,6 +454,135 @@ export interface SlotReplyPort {
     readonly actor: Actor;
     readonly traceId: string;
   }): Promise<{ readonly ok: boolean; readonly code?: string; readonly reason?: string }>;
+}
+
+/**
+ * What the phase-6 taps do (6.3, 6.4, 6.5, 6.6, 6.7).
+ *
+ * Optional on the handler, like `ApprovalReplyPort` and `SlotReplyPort`, and
+ * for the same reason: a deployment without the retention module still routes
+ * every message — a tap is recognised, logged and nothing else happens. What it
+ * must never do is fall through to the intake pipeline, which would turn "Not
+ * interested" into a draft job card.
+ *
+ * Five methods rather than one dispatcher because the five taps mean five
+ * different things to five different services, and a single `handle(replyId)`
+ * would put the routing decision behind an interface where nothing could test
+ * it. The parsing lives in `retention-actions.ts`; this is what the parse is
+ * *for*.
+ */
+export interface RetentionReplyPort {
+  /** Book a slot / Remind me later / Not interested, on a re-pitch (6.3). */
+  answerRepitch(input: {
+    readonly shopId: string;
+    readonly ledgerItemId: string;
+    readonly response: RepitchResponse;
+    readonly conversationId: string;
+    readonly customerId: string | null;
+    readonly actor: Actor;
+    readonly traceId: string;
+  }): Promise<{ readonly handled: boolean; readonly detail: string }>;
+
+  /** 😊 😐 😞 on a post-service ask (6.4). */
+  answerFeedback(input: {
+    readonly shopId: string;
+    readonly feedbackId: string;
+    readonly sentiment: FeedbackSentiment;
+    readonly conversationId: string | null;
+    readonly actor: Actor;
+    readonly traceId: string;
+  }): Promise<{ readonly handled: boolean; readonly detail: string }>;
+
+  /**
+   * A free-text or voice-note comment following a face (6.4).
+   *
+   * Separate from `answerFeedback` because it arrives as an ordinary message
+   * minutes later, not as a tap, and because a comment with no open feedback
+   * record is just a message — the handler needs to be told that, not to guess.
+   */
+  attachFeedbackComment(input: {
+    readonly shopId: string;
+    readonly customerId: string;
+    readonly comment: string;
+    readonly viaVoiceNote: boolean;
+    readonly mediaId: string | null;
+    readonly traceId: string;
+  }): Promise<boolean>;
+
+  /** Yes / no to tracking insurance and PUC dates (6.5). */
+  answerDocumentEnrolment(input: {
+    readonly shopId: string;
+    readonly vehicleId: string;
+    readonly customerId: string;
+    readonly enrol: boolean;
+    readonly conversationId: string | null;
+    readonly actor: Actor;
+    readonly traceId: string;
+  }): Promise<{ readonly handled: boolean; readonly detail: string }>;
+
+  /** The second, explicit MARKETING ask (6.6). */
+  answerMarketingConsent(input: {
+    readonly shopId: string;
+    readonly customerId: string;
+    readonly conversationId: string;
+    readonly decision: 'GRANT' | 'DECLINE';
+    readonly evidence: string;
+    readonly actor: Actor;
+    readonly traceId: string;
+  }): Promise<{ readonly handled: boolean; readonly detail: string }>;
+
+  /**
+   * A bare number that might be an odometer reading (6.2).
+   *
+   * Returns null when it is not one, which is the ordinary case: the caller
+   * then carries on treating the message as whatever else it is.
+   */
+  recordVolunteeredOdometer(input: {
+    readonly shopId: string;
+    readonly customerId: string;
+    readonly text: string;
+    readonly messageId: string | null;
+    readonly actor: Actor;
+    readonly traceId: string;
+  }): Promise<{ readonly vehicleId: string; readonly odometerKm: number } | null>;
+
+  /** "I'll call" on a digest line — staff, not a customer (6.7). */
+  claimDigestLine(input: {
+    readonly shopId: string;
+    readonly approvalId: string;
+    readonly claimedByStaffId: string | null;
+    readonly conversationId: string | null;
+    readonly actor: Actor;
+    readonly traceId: string;
+  }): Promise<{ readonly handled: boolean; readonly detail: string }>;
+}
+
+/**
+ * The retention half of the gate's frequency layer (phase 6.1).
+ *
+ * Declared here rather than in `retention/` for the reason `SlotReplyPort` is:
+ * the retention module imports `OutboundGate` from this one, so a value import
+ * back the other way would close a cycle. It is also the narrowest possible
+ * surface on purpose — `packages/domain/messaging` must not learn what a ledger
+ * item is in order to enforce a cap.
+ *
+ * Two questions, two answers: when did we last write to this person for
+ * retention, and is there a hold on them. The gate applies the shop's
+ * twenty-one-day floor to the first and refuses outright on the second.
+ *
+ * Optional on the gate's dependencies. A deployment without the retention
+ * module still sends messages; it simply has no retention traffic to apply a
+ * retention floor to.
+ */
+export interface RetentionGateFacts {
+  /** The last retention touch that actually reached this customer. */
+  readonly lastTouchAt: Date | null;
+  /** Non-null while a hold is open — a negative review, a complaint. */
+  readonly frozenReason: string | null;
+}
+
+export interface RetentionFrequencyReader<Tx> {
+  facts(tx: Tx, shopId: string, customerId: string): Promise<RetentionGateFacts>;
 }
 
 export interface CustomerLookup<Tx> {

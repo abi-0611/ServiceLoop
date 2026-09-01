@@ -69,6 +69,17 @@ export type SpeechDriver = z.infer<typeof SpeechDriverSchema>;
 export const PaymentsDriverSchema = z.enum(['mock', 'razorpay']);
 export type PaymentsDriver = z.infer<typeof PaymentsDriverSchema>;
 
+/**
+ * Telephony (phase 5). `loopback` is the browser softphone in the console —
+ * a complete adapter, not a stub, and the surface the whole phase is built on.
+ */
+export const TelephonyDriverSchema = z.enum(['loopback', 'exotel', 'twilio']);
+export type TelephonyDriver = z.infer<typeof TelephonyDriverSchema>;
+
+/** The streaming half of the speech port (phase 5.2). */
+export const StreamingSpeechDriverSchema = z.enum(['mock', 'sarvam', 'google']);
+export type StreamingSpeechDriver = z.infer<typeof StreamingSpeechDriverSchema>;
+
 /** Per-model prices in USD per million tokens, for the `llm_usage` meter. */
 export const LlmPricingSchema = z.record(
   z.string().min(1),
@@ -276,6 +287,128 @@ export const EnvSchema = z
      */
     GATE_PASS_SECRET: z.string().min(32).default(DEV_GATE_PASS_SECRET),
 
+
+    /* --- Telephony & voice (phase 5) -------------------------------------- */
+    /**
+     * Which handset the `TelephonyPort` is wired to.
+     *
+     * `loopback` is the browser softphone in the console: the far end is a
+     * developer's microphone and an on-screen keypad, and no telco account
+     * exists anywhere. It is a complete adapter rather than a stub — the same
+     * PCM frame interface, the same typed call events, the same recording
+     * lifecycle — which is what lets the whole phase be built and demoed before
+     * a single Exotel credential is issued.
+     */
+    TELEPHONY_DRIVER: TelephonyDriverSchema.default('loopback'),
+    /** The number a customer sees. Also the caller id Exotel/Twilio dial from. */
+    TELEPHONY_CALLER_ID: z.string().min(1).optional(),
+    /** Where the provider posts call events. Public, signature-verified.  */
+    TELEPHONY_WEBHOOK_BASE_URL: z.string().url().optional(),
+    /**
+     * Shared secret the provider signs its callbacks with.
+     *
+     * Separate from `JWT_SECRET` and `GATE_PASS_SECRET` for the same reason
+     * those are separate from each other: three different parties hold three
+     * different capabilities, and rotating one must not invalidate the others.
+     */
+    TELEPHONY_WEBHOOK_SECRET: z.string().min(16).optional(),
+    TELEPHONY_TIMEOUT_MS: intish(15_000, 1_000, 120_000),
+
+    /** Exotel (primary, India). `subdomain` differs per account region. */
+    EXOTEL_ACCOUNT_SID: z.string().min(1).optional(),
+    EXOTEL_API_KEY: z.string().min(1).optional(),
+    EXOTEL_API_TOKEN: z.string().min(1).optional(),
+    EXOTEL_SUBDOMAIN: z.string().min(1).default('api.exotel.com'),
+    /**
+     * The Exotel *app* (flow) id that hands the leg to our media stream.
+     *
+     * Exotel routes an outgoing call through an App Bazaar flow rather than
+     * accepting inline instructions, so the flow is configuration: a shop that
+     * re-publishes its flow gets a new id and no code changes.
+     */
+    EXOTEL_FLOW_APP_ID: z.string().min(1).optional(),
+
+    /** Twilio, the documented alternative behind the same contract. */
+    TWILIO_ACCOUNT_SID: z.string().min(1).optional(),
+    TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
+    TWILIO_BASE_URL: z.string().url().default('https://api.twilio.com'),
+
+    /**
+     * The instant off switch (phase 5.7).
+     *
+     * True reverts every `VOICE_OR_ADVISOR` rung to an advisor task and refuses
+     * every origination, without a deploy. It is an env flag *and* a shop-config
+     * flag: the env one is the platform's brake, the config one is the shop's,
+     * and either alone is enough to stop a call.
+     */
+    VOICE_KILL_SWITCH: booleanish(false),
+    /** Speech-end to speech-start. The phase's own number is 1.2 seconds. */
+    VOICE_LATENCY_BUDGET_MS: intish(1_200, 200, 10_000),
+    /** Silence after a final transcript that ends the caller's turn. */
+    VOICE_ENDPOINT_SILENCE_MS: intish(700, 100, 5_000),
+    /** Longest the line may be silent before a comfort filler is played. */
+    VOICE_MAX_DEAD_AIR_MS: intish(3_000, 500, 15_000),
+    /** Barge-in must cut synthesis within this. Asserted by the loopback tests. */
+    VOICE_BARGE_IN_CUTOFF_MS: intish(300, 50, 2_000),
+    /** Agent turns per call before the graceful exit fires. */
+    VOICE_MAX_TURNS: intish(12, 2, 40),
+    /** Wall clock for a whole call, including the greeting and the close. */
+    VOICE_MAX_CALL_SECONDS: intish(240, 30, 1_800),
+    /** How long after an unanswered call the single retry is scheduled. */
+    VOICE_RETRY_AFTER_MINUTES: intish(20, 1, 24 * 60),
+    /** Recording + transcript retention. Phase 7 wires the deletion cascade. */
+    VOICE_RECORDING_RETENTION_DAYS: intish(180, 1, 3_650),
+
+    /**
+     * Per-second price estimates for the cost meter, in paise.
+     *
+     * Estimates, and named as such: the authoritative number arrives on the
+     * provider's invoice weeks later, while the cap has to decide *now* whether
+     * this shop may place another call. A meter that waited for the true figure
+     * would be a meter that never stopped anything.
+     */
+    VOICE_TELCO_PAISE_PER_MINUTE: intish(60, 0, 100_000),
+    VOICE_STT_PAISE_PER_MINUTE: intish(50, 0, 100_000),
+    VOICE_TTS_PAISE_PER_MINUTE: intish(80, 0, 100_000),
+    /** Platform-wide daily ceiling across every shop. Alert, then halt. */
+    VOICE_PLATFORM_DAILY_CAP_PAISE: intish(500_000, 0, 1_000_000_000),
+    /** Fraction of a cap at which the alert fires, before the halt. */
+    VOICE_COST_ALERT_RATIO: z.coerce.number().min(0.1).max(1).default(0.8),
+
+    /* --- Streaming speech (phase 5.2) ------------------------------------- */
+    /**
+     * The streaming half of `SpeechPort`.
+     *
+     * Defaults to `mock` and is forced there by DEMO_MODE, so CI transcribes a
+     * whole call from fixtures with no credential and no network — which is what
+     * makes the voice simulation suite a required check rather than a nightly
+     * one.
+     */
+    SPEECH_STREAM_DRIVER: StreamingSpeechDriverSchema.default('mock'),
+    /** Sarvam's realtime websocket base. Verified against current docs at wiring. */
+    SARVAM_STREAM_URL: z.string().url().default('wss://api.sarvam.ai/speech-to-text/ws'),
+    SARVAM_STREAM_STT_MODEL: z.string().min(1).default('saarika:v2.5'),
+    SARVAM_TTS_MODEL: z.string().min(1).default('bulbul:v2'),
+    /** Bulbul voice ids per language. Never hardcoded (§10). */
+    SARVAM_TTS_VOICE_TA: z.string().min(1).default('anushka'),
+    SARVAM_TTS_VOICE_HI: z.string().min(1).default('anushka'),
+    SARVAM_TTS_VOICE_EN: z.string().min(1).default('anushka'),
+    GOOGLE_STREAM_RECOGNIZER: z.string().min(1).optional(),
+    /** Frame size on the wire. 20 ms is what every telco stack emits. */
+    VOICE_FRAME_MS: intish(20, 10, 60),
+    /**
+     * How fast the browser softphone's modelled line plays queued audio.
+     *
+     * One — real time — is the default and the only honest setting for a demo
+     * somebody is listening to: a ten-second greeting takes ten seconds. CI
+     * turns it up so a whole call runs in under a second, which changes no
+     * behaviour under test and only shortens the wait for audio the runtime has
+     * already queued. The same seam as the fake clock the rest of this codebase
+     * uses, and it applies to the loopback adapter alone — a telephone company
+     * does not take instructions about how fast to play a sentence.
+     */
+    VOICE_LOOPBACK_PLAYBACK_SPEED: intish(1, 1, 100),
+
     OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
     OTEL_SERVICE_NAME: z.string().min(1).optional(),
 
@@ -300,6 +433,24 @@ export const EnvSchema = z
      */
     SILENT_BAY_SCAN_MS: intish(5 * 60_000, 10_000, 60 * 60_000),
     REMINDER_SCAN_MS: intish(60_000, 10_000, 60 * 60_000),
+
+    /**
+     * The phase-6 sentinels.
+     *
+     * Slower than phase 4's on purpose. Retention is measured in weeks: the
+     * tightest thing any of these scans for is a re-pitch whose horizon passed
+     * this morning, and scanning for that every minute would spend a database
+     * pass a minute to move a message forward by seconds. Fifteen minutes for
+     * the trigger engine and the feedback ask, two for the stuck-approval
+     * stream because that one is an *exception* an owner is waiting on, and
+     * five for the fold-and-brief pass, which is what decides how close to the
+     * shop's configured digest time the brief actually lands.
+     */
+    RETENTION_SCAN_MS: intish(15 * 60_000, 10_000, 6 * 60 * 60_000),
+    RETENTION_BATCH_SIZE: intish(50, 1, 500),
+    FEEDBACK_SCAN_MS: intish(15 * 60_000, 10_000, 6 * 60 * 60_000),
+    ALERT_SCAN_MS: intish(2 * 60_000, 10_000, 60 * 60_000),
+    DIGEST_SCAN_MS: intish(5 * 60_000, 10_000, 60 * 60_000),
 
     WORKER_CONCURRENCY: intish(5, 1, 100),
     OUTBOX_BATCH_SIZE: intish(100, 1, 1000),
@@ -368,6 +519,61 @@ export const EnvSchema = z
       }
     }
 
+    // A live telephony driver with no credentials would accept an origination
+    // and drop it — a customer whose ladder believes it called them and never
+    // did, which is worse than a rung that honestly raised an advisor task.
+    if (value.TELEPHONY_DRIVER === 'exotel') {
+      for (const key of [
+        'EXOTEL_ACCOUNT_SID',
+        'EXOTEL_API_KEY',
+        'EXOTEL_API_TOKEN',
+        'EXOTEL_FLOW_APP_ID',
+        'TELEPHONY_CALLER_ID',
+      ] as const) {
+        if (value[key] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when TELEPHONY_DRIVER=exotel`,
+          });
+        }
+      }
+    }
+    if (value.TELEPHONY_DRIVER === 'twilio') {
+      for (const key of ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TELEPHONY_CALLER_ID'] as const) {
+        if (value[key] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when TELEPHONY_DRIVER=twilio`,
+          });
+        }
+      }
+    }
+    // A provider callback is authenticated by its signature and nothing else,
+    // so a live driver without the secret has an unauthenticated webhook.
+    if (value.TELEPHONY_DRIVER !== 'loopback' && value.TELEPHONY_WEBHOOK_SECRET === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TELEPHONY_WEBHOOK_SECRET'],
+        message: 'TELEPHONY_WEBHOOK_SECRET is required when a live telephony driver is selected',
+      });
+    }
+    if (value.SPEECH_STREAM_DRIVER === 'sarvam' && value.SARVAM_API_KEY === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SARVAM_API_KEY'],
+        message: 'SARVAM_API_KEY is required when SPEECH_STREAM_DRIVER=sarvam',
+      });
+    }
+    if (value.SPEECH_STREAM_DRIVER === 'google' && value.GOOGLE_STREAM_RECOGNIZER === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['GOOGLE_STREAM_RECOGNIZER'],
+        message: 'GOOGLE_STREAM_RECOGNIZER is required when SPEECH_STREAM_DRIVER=google',
+      });
+    }
+
     if (value.NODE_ENV !== 'production') return;
 
     if (value.DEMO_MODE) {
@@ -403,6 +609,16 @@ export const EnvSchema = z
         code: z.ZodIssueCode.custom,
         path: ['GATE_PASS_SECRET'],
         message: 'GATE_PASS_SECRET still holds the development placeholder',
+      });
+    }
+    if (value.TELEPHONY_DRIVER === 'loopback') {
+      // The loopback adapter's far end is a browser tab. In production that is
+      // a shop whose voice rungs ring a page nobody has open.
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TELEPHONY_DRIVER'],
+        message:
+          'TELEPHONY_DRIVER must be "exotel" or "twilio" in production: the loopback adapter rings a browser tab, not a customer',
       });
     }
     if (value.PAYMENTS_DRIVER === 'mock') {

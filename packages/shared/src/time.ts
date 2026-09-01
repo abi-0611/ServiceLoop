@@ -165,3 +165,103 @@ export const systemClock: Clock = { now: () => new Date() };
 export function fixedClock(instant: Date): Clock {
   return { now: () => new Date(instant.getTime()) };
 }
+
+/* -------------------------------------------------------------------------- *
+ * Phase 6 — calendar helpers for seasons, horizons and daily rollups
+ * -------------------------------------------------------------------------- */
+
+/** A day of the year with no year attached, e.g. `06-01` for 1 June. */
+export const MmDdSchema = z
+  .string()
+  .regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Expected MM-DD');
+
+/** A local calendar day, e.g. `2026-09-14`. The key a daily rollup is filed under. */
+export const IsoDaySchema = z
+  .string()
+  .regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Expected YYYY-MM-DD');
+
+export type IsoDay = string;
+
+/** The shop-local calendar day an instant falls on. */
+export function localDay(instant: Date, timeZone: string): IsoDay {
+  const parts = zonedParts(instant, timeZone);
+  return `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(
+    parts.day,
+  ).padStart(2, '0')}`;
+}
+
+export function addLocalDays(day: IsoDay, days: number): IsoDay {
+  const at = new Date(`${day}T00:00:00.000Z`);
+  at.setUTCDate(at.getUTCDate() + days);
+  return at.toISOString().slice(0, 10);
+}
+
+/** Whole days from `from` to `to`, both shop-local calendar days. */
+export function localDaysBetween(from: IsoDay, to: IsoDay): number {
+  const a = Date.parse(`${from}T00:00:00.000Z`);
+  const b = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((b - a) / (MINUTES_PER_DAY * 60_000));
+}
+
+/**
+ * The half-open UTC interval `[start, end)` covering one shop-local day.
+ *
+ * Two probes rather than arithmetic on an assumed offset: India does not
+ * observe daylight saving, but this helper is not allowed to be the reason a
+ * deployment elsewhere silently mis-files an hour of events, and a rollup that
+ * loses an hour is a rollup whose recomputation will not match.
+ */
+export function localDayBounds(day: IsoDay, timeZone: string): { start: Date; end: Date } {
+  const [year, month, date] = day.split('-').map(Number) as [number, number, number];
+  const at = (y: number, m: number, d: number): Date => {
+    // Guess UTC midnight, then correct by the offset the zone reports there.
+    const guess = Date.UTC(y, m - 1, d, 0, 0, 0);
+    let cursor = new Date(guess);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const parts = zonedParts(cursor, timeZone);
+      const localMinutes =
+        (Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute) - guess) /
+        60_000;
+      if (localMinutes === 0) return cursor;
+      cursor = new Date(cursor.getTime() - localMinutes * 60_000);
+    }
+    return cursor;
+  };
+
+  const start = at(year, month, date);
+  const next = new Date(Date.UTC(year, month - 1, date + 1));
+  const end = at(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate());
+  return { start, end };
+}
+
+/**
+ * Is this instant inside a seasonal window (phase 6.2)?
+ *
+ * Windows are `MM-DD` pairs with no year, and one that wraps the year end —
+ * a winter window running `11-15` to `02-15` — is expected rather than an edge
+ * case, which is why the comparison is on day-of-year strings and not on dates.
+ */
+export function isWithinSeason(
+  instant: Date,
+  timeZone: string,
+  window: { readonly start: string; readonly end: string },
+): boolean {
+  const parts = zonedParts(instant, timeZone);
+  const today = `${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+  return window.start <= window.end
+    ? today >= window.start && today <= window.end
+    : today >= window.start || today <= window.end;
+}
+
+/**
+ * The next instant at or after `from` whose shop-local wall clock is `hhMm`.
+ *
+ * How the digest gets sent at 20:30 in the shop's own evening rather than at
+ * 20:30 wherever the server happens to be.
+ */
+export function nextLocalTimeAt(from: Date, timeZone: string, hhMm: string): Date {
+  const target = parseHhMm(hhMm);
+  const now = minutesOfDayInZone(from, timeZone);
+  const delta = (target - now + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  return new Date(from.getTime() + (delta === 0 ? MINUTES_PER_DAY : delta) * 60_000);
+}

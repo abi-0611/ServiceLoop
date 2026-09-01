@@ -5,7 +5,9 @@ follow-up loop — evidence-backed approval chasing, proactive status updates, d
 payment, and declined-work recovery — over WhatsApp and voice, in Tamil/Hindi/English, on top of
 whatever the garage already uses **including paper job cards**.
 
-> **Status: Phase 1 (Foundation & domain core) complete.** See [`PROGRESS.md`](./PROGRESS.md).
+> **Status: Phases 1–6 complete.** The loop now runs end to end — intake, approval, status,
+> delivery, payment, voice, and the retention engine with the owner digest and analytics on top.
+> See [`PROGRESS.md`](./PROGRESS.md).
 
 ---
 
@@ -22,7 +24,7 @@ sandbox has no SMS provider, so the OTP is shown on screen (DEMO_MODE only).
 
 | Service | URL | Notes |
 |---|---|---|
-| Console | http://localhost:3000 | Job card board, conversations, guardrails |
+| Console | http://localhost:3000 | Job card board, conversations, analytics, guardrails |
 | API | http://localhost:3001 | `/health`, `/health/ready`, `/metrics` |
 | Workers | — | metrics on http://localhost:9101/metrics |
 | MinIO console | http://localhost:9001 | `serviceloop` / `serviceloop` |
@@ -51,11 +53,19 @@ pnpm test:unit      # fast, no docker
 pnpm test           # unit + integration (needs docker)
 pnpm demo:phase1    # phase 1 acceptance scenario, exits non-zero on failure
 pnpm demo:phase4    # the whole middle-and-end loop: voice note → invoice → UPI → gate pass
+pnpm demo:phase5    # one outbound approval call and one inbound call, no telco account
+pnpm demo:phase6    # April's declined brakes → the June rains → booking → ₹ recovered
 pnpm sim            # the conversation simulator, seven personas
+pnpm sim:voice      # the voice simulator, five whole telephone calls
 
 pnpm db:migrate     # apply migrations
 pnpm db:rollback    # revert the newest migration
 pnpm db:seed        # seed the demo shop  (--reset rebuilds from scratch)
+
+pnpm metrics:recompute --from 2026-04-01 [--to ...] [--shop ...]
+                    # re-fold every KPI from the event log; non-zero if a stored
+                    # rollup's numbers moved. This is the audit story for
+                    # "₹ recovered from previously declined work".
 
 pnpm infra:up       # docker compose up
 pnpm infra:down     # docker compose down
@@ -104,6 +114,11 @@ infra/         docker compose, deploy scripts
   idempotent consumers. Delivery is at-least-once; effects are exactly-once.
 - **PII at rest.** Customer name and phone are AES-256-GCM encrypted in Postgres; lookup goes
   through a per-shop HMAC blind index, so one shop's index cannot probe another's.
+- **One source of numeric truth.** Every KPI on the Analytics pages and every rupee in the
+  owner's evening WhatsApp digest is read from the same stored daily rollup, folded from the
+  event log. `pnpm metrics:recompute` re-derives them and fails if anything moved — so
+  "₹ recovered from previously declined work" is a claim that can be checked rather than one
+  that has to be believed.
 
 ## Documentation
 

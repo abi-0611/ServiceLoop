@@ -1,11 +1,19 @@
 import {
   ADVISOR_TASK_KINDS,
   ADVISOR_TASK_STATUSES,
+  ALERT_KINDS,
   AGENT_OBJECTIVES,
   AGENT_RUN_OUTCOMES,
   AGENT_RUN_STATUSES,
   APPROVAL_STATUSES,
   AUDIT_ACTOR_TYPES,
+  CALL_CONSENT_FACTS,
+  CALL_DIRECTIONS,
+  CALL_END_REASONS,
+  CALL_INPUT_MODES,
+  CALL_OUTCOMES,
+  CALL_STATUSES,
+  CALL_TURN_ROLES,
   CHANNEL_TYPES,
   CONSENT_PURPOSES,
   CONSENT_SOURCES,
@@ -15,7 +23,10 @@ import {
   CONVERSATION_STATES,
   CUSTOMER_DECISIONS,
   DECLINE_KINDS,
+  DECLINE_REASONS,
   DELIVERY_BOOKING_STATUSES,
+  DIGEST_KINDS,
+  DOCUMENT_KINDS,
   ESCALATION_CHANNELS,
   ESCALATION_RUNG_TYPES,
   ESCALATION_STATUSES,
@@ -23,6 +34,8 @@ import {
   ESTIMATE_STATUSES,
   ETA_MATERIALITIES,
   ETA_REASONS,
+  FEEDBACK_SENTIMENTS,
+  FEEDBACK_STATUSES,
   GATE_PASS_STATUSES,
   GATE_PASS_VERIFY_RESULTS,
   INTAKE_DRAFT_STATUSES,
@@ -45,12 +58,18 @@ import {
   PAYMENT_EVENT_KINDS,
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
+  REMINDER_KINDS,
+  REPITCH_RESPONSES,
+  RETENTION_TOUCH_STATUSES,
+  RETENTION_TRIGGERS,
   REVIEW_ACTIONS,
+  ROLLUP_SOURCES,
   STAFF_ROLES,
   STATUS_SIGNAL_ROUTES,
   STATUS_SIGNAL_SOURCES,
   STATUS_SIGNAL_TYPES,
   TASK_URGENCIES,
+  VOICE_INTENTS,
   WA_TEMPLATE_CATEGORIES,
   WA_TEMPLATE_STATUSES,
   WORK_ITEM_STATES,
@@ -131,3 +150,29 @@ export const advisorTaskKindEnum = pgEnum('advisor_task_kind', ADVISOR_TASK_KIND
 export const advisorTaskStatusEnum = pgEnum('advisor_task_status', ADVISOR_TASK_STATUSES);
 export const taskUrgencyEnum = pgEnum('task_urgency', TASK_URGENCIES);
 export const reviewActionEnum = pgEnum('review_action', REVIEW_ACTIONS);
+
+/* Phase 5 — the voice layer. */
+export const callDirectionEnum = pgEnum('call_direction', CALL_DIRECTIONS);
+export const callStatusEnum = pgEnum('call_status', CALL_STATUSES);
+export const callOutcomeEnum = pgEnum('call_outcome', CALL_OUTCOMES);
+export const callEndReasonEnum = pgEnum('call_end_reason', CALL_END_REASONS);
+export const callTurnRoleEnum = pgEnum('call_turn_role', CALL_TURN_ROLES);
+export const callInputModeEnum = pgEnum('call_input_mode', CALL_INPUT_MODES);
+export const callConsentFactEnum = pgEnum('call_consent_fact', CALL_CONSENT_FACTS);
+export const voiceIntentEnum = pgEnum('voice_intent', VOICE_INTENTS);
+
+/* Phase 6 — retention, feedback, digest & analytics. */
+export const declineReasonEnum = pgEnum('decline_reason', DECLINE_REASONS);
+export const retentionTriggerEnum = pgEnum('retention_trigger', RETENTION_TRIGGERS);
+export const retentionTouchStatusEnum = pgEnum(
+  'retention_touch_status',
+  RETENTION_TOUCH_STATUSES,
+);
+export const repitchResponseEnum = pgEnum('repitch_response', REPITCH_RESPONSES);
+export const feedbackSentimentEnum = pgEnum('feedback_sentiment', FEEDBACK_SENTIMENTS);
+export const feedbackStatusEnum = pgEnum('feedback_status', FEEDBACK_STATUSES);
+export const documentKindEnum = pgEnum('document_kind', DOCUMENT_KINDS);
+export const reminderKindEnum = pgEnum('reminder_kind', REMINDER_KINDS);
+export const digestKindEnum = pgEnum('digest_kind', DIGEST_KINDS);
+export const alertKindEnum = pgEnum('alert_kind', ALERT_KINDS);
+export const rollupSourceEnum = pgEnum('rollup_source', ROLLUP_SOURCES);

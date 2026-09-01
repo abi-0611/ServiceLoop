@@ -112,12 +112,26 @@ export const workItems = pgTable(
     approvedAt: timestamptz('approved_at'),
     startedAt: timestamptz('started_at'),
     completedAt: timestamptz('completed_at'),
+    /**
+     * The declined-work ledger item this line is picking up (phase 6.1).
+     *
+     * Set when an advisor adds previously-deferred work to a new visit from the
+     * card drawer's "while it's here" prompt. It is what makes a conversion
+     * *exact*: when this line is approved, that ledger item converted, and the
+     * rupees land in "₹ recovered" attributable to the item they came from.
+     *
+     * The alternative — matching a new work item to an old ledger entry by its
+     * title — would put a fuzzy string comparison underneath the number the
+     * whole business case rests on.
+     */
+    ledgerItemId: uuid('ledger_item_id'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     index('work_items_job_card_idx').on(table.jobCardId, table.sequence),
     index('work_items_shop_state_idx').on(table.shopId, table.state),
+    index('work_items_ledger_idx').on(table.ledgerItemId),
   ],
 );
 

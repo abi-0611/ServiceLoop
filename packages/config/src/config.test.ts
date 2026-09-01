@@ -61,12 +61,31 @@ describe('adapter selection', () => {
     expect(formatAdapterSelection(loadEnv({})).join('\n')).toContain('adapter[storage] SANDBOX');
   });
 
-  it('marks unimplemented ports as pending rather than claiming they are live', () => {
+  it('has no pending ports left: phase 5 wired the last one', () => {
     const lines = formatAdapterSelection(loadEnv({}));
-    // Telephony is phase 5's. It is the only port left with no implementation,
-    // and the boot log must never claim a capability that does not exist.
-    expect(lines.some((line) => line.includes('adapter[telephony] PENDING'))).toBe(true);
-    expect(lines.some((line) => line.includes('PENDING')) && lines.filter((line) => line.includes('PENDING')).length).toBe(1);
+    // Telephony was the last PENDING line in the boot log. Phase 5.1 gave it a
+    // real sandbox adapter — the browser softphone — so nothing is left that
+    // the log has to describe as a capability this build does not have.
+    expect(lines.filter((line) => line.includes('PENDING'))).toEqual([]);
+    expect(lines.some((line) => line.includes('adapter[telephony] SANDBOX'))).toBe(true);
+  });
+
+  it('refuses the loopback telephony adapter in production', () => {
+    expect(() => loadEnv({ NODE_ENV: 'production', TELEPHONY_DRIVER: 'loopback' })).toThrow(
+      /TELEPHONY_DRIVER/,
+    );
+  });
+
+  it('refuses a live telephony driver with no credentials', () => {
+    expect(() => loadEnv({ TELEPHONY_DRIVER: 'exotel' })).toThrow(/EXOTEL_ACCOUNT_SID/);
+    expect(() =>
+      loadEnv({
+        TELEPHONY_DRIVER: 'twilio',
+        TWILIO_ACCOUNT_SID: 'AC1',
+        TWILIO_AUTH_TOKEN: 'tok',
+        TELEPHONY_CALLER_ID: '+911234567890',
+      }),
+    ).toThrow(/TELEPHONY_WEBHOOK_SECRET/);
   });
 
   it('reports every implemented port as a live sandbox adapter in DEMO_MODE', () => {
@@ -74,7 +93,15 @@ describe('adapter selection', () => {
     // `payments` joined this list in phase 4.9: the mock adapter is a real
     // adapter — it mints links, keeps a ledger and signs webhook payloads — so
     // reporting it as PENDING would now understate what the process can do.
-    for (const port of ['whatsapp', 'llm', 'ocr', 'speech', 'payments']) {
+    for (const port of [
+      'whatsapp',
+      'llm',
+      'ocr',
+      'speech',
+      'speech-stream',
+      'telephony',
+      'payments',
+    ]) {
       expect(lines.some((line) => line.includes(`adapter[${port}] SANDBOX`)), port).toBe(true);
     }
   });

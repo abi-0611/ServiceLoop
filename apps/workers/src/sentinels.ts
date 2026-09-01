@@ -22,21 +22,31 @@ import type { Logger } from 'pino';
  * been done, so the next tick reclaims exactly what the failed one left.
  */
 
-export interface SentinelDeps {
-  readonly loop: LoopRuntime<Tx>;
+/**
+ * What every sentinel needs, whatever it is scanning.
+ *
+ * Split out of `SentinelDeps` so phase 6's scanners can extend the same base
+ * without dragging `LoopRuntime` in: a retention scan has no business holding a
+ * payment gateway.
+ */
+export interface SentinelBase {
   readonly uow: PgUnitOfWork;
   readonly logger: Logger;
   /** Shops to scan. Resolved once at boot; a new shop joins on the next restart. */
   readonly shopIds: () => Promise<readonly string[]>;
 }
 
-abstract class PollingSentinel {
+export interface SentinelDeps extends SentinelBase {
+  readonly loop: LoopRuntime<Tx>;
+}
+
+export abstract class PollingSentinel {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private busy = false;
 
   protected constructor(
-    protected readonly deps: SentinelDeps,
+    private readonly base: SentinelBase,
     private readonly intervalMs: number,
     private readonly label: string,
   ) {}
@@ -65,7 +75,7 @@ abstract class PollingSentinel {
     } catch (error) {
       // A failed pass must not stop the loop: the next tick reclaims the same
       // work, because nothing was marked done.
-      this.deps.logger.error({ err: error }, `${this.label} pass failed`);
+      this.base.logger.error({ err: error }, `${this.label} pass failed`);
     } finally {
       this.busy = false;
     }
@@ -95,7 +105,10 @@ export class SilentBayScanner extends PollingSentinel {
   private readonly conversations = new PgConversationStore();
   private readonly config = new PgShopConfigStore();
 
-  constructor(deps: SentinelDeps, intervalMs: number) {
+  constructor(
+    private readonly deps: SentinelDeps,
+    intervalMs: number,
+  ) {
     super(deps, intervalMs, 'silent-bay');
   }
 
@@ -161,7 +174,7 @@ export class SilentBayScanner extends PollingSentinel {
  */
 export class ReminderSentinel extends PollingSentinel {
   constructor(
-    deps: SentinelDeps,
+    private readonly deps: SentinelDeps,
     intervalMs: number,
     private readonly batchSize: number,
   ) {

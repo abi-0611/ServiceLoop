@@ -17,12 +17,14 @@ import { jobCards, workItems } from './jobs';
 import {
   auditActorTypeEnum,
   declineKindEnum,
+  declineReasonEnum,
   escalationChannelEnum,
   escalationRungTypeEnum,
   escalationStatusEnum,
   ledgerStatusEnum,
   objectiveEnum,
   outboxStatusEnum,
+  repitchResponseEnum,
 } from './enums';
 
 /** Operational spine: ledger, escalations, config, audit, outbox, idempotency. */
@@ -50,12 +52,59 @@ export const declinedWorkLedger = pgTable(
     /** Free-form tags ("monsoon", "next-service", "odometer>50000"). */
     triggerTags: jsonb('trigger_tags').notNull().default([]),
     status: ledgerStatusEnum('status').notNull().default('OPEN'),
+
+    /* --- phase 6.1: the lifecycle the phase-1 row only sketched ---------- */
+
+    /**
+     * *Why* the customer said no, as opposed to `kind`, which records what the
+     * work item's state became.
+     *
+     * Four reasons need four different follow-ups: a deferral is a timing
+     * problem the horizon solves, a price objection needs the owner, and
+     * distrust needs evidence rather than another quote.
+     */
+    declineReason: declineReasonEnum('decline_reason').notNull().default('other'),
+    /** Shop-KB category ("brakes", "tyres", "cosmetic") — picks the horizon. */
+    category: text('category'),
+    /**
+     * A snapshot of the item's title and the technician's own words at the time.
+     *
+     * Denormalised on purpose. A re-pitch three months later must restate what
+     * the technician actually found on the day, and the work item's title may
+     * since have been edited, its estimate superseded, and its media pruned by a
+     * retention policy. L7 says a claim must trace to evidence; this is that
+     * evidence, frozen at the moment the customer declined it.
+     */
+    title: text('title'),
+    technicianNote: text('technician_note'),
+    /** The bundle the original ask cited, so a re-pitch can cite the same one. */
+    evidenceBundleId: uuid('evidence_bundle_id'),
+    estimateLineIds: jsonb('estimate_line_ids').notNull().default([]),
+
+    /** How many times this item has been re-pitched. Capped at 2 by CHECK. */
+    repitchCount: integer('repitch_count').notNull().default(0),
+    lastRepitchedAt: timestamptz('last_repitched_at'),
+    /** What the customer tapped on the last re-pitch, if anything. */
+    lastResponse: repitchResponseEnum('last_response'),
+
+    closedAt: timestamptz('closed_at'),
+    closedReason: text('closed_reason'),
+    /** The visit the recovered work was done on. */
+    convertedJobCardId: uuid('converted_job_card_id').references(() => jobCards.id, {
+      onDelete: 'set null',
+    }),
+    recoveredAmountPaise: bigint('recovered_amount_paise', { mode: 'number' })
+      .notNull()
+      .default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     uniqueIndex('declined_work_ledger_work_item_key').on(table.workItemId),
     index('declined_work_ledger_followup_idx').on(table.shopId, table.status, table.followUpAfter),
+    // The next-visit trigger's read: "what has this customer left undone?"
+    index('declined_work_ledger_customer_idx').on(table.shopId, table.customerId, table.status),
+    index('declined_work_ledger_vehicle_idx').on(table.shopId, table.vehicleId, table.status),
   ],
 );
 

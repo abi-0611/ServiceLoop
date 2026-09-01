@@ -52,6 +52,16 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE.advisor },
     },
     {
+      // Phase 5's softphone.
+      name: 'voice',
+      testMatch: /softphone\.spec\.ts/,
+      dependencies: ['setup'],
+      // As OWNER: switching voice on is an owner's decision, and the same
+      // session then places the call — which is exactly the sequence a shop
+      // goes through the first time.
+      use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE.owner },
+    },
+    {
       name: 'advisor-mobile',
       testMatch: /board\.spec\.ts/,
       dependencies: ['setup'],
@@ -89,6 +99,23 @@ export default defineConfig({
       testMatch: /loop\.spec\.ts/,
       dependencies: ['setup'],
       use: { ...devices['Pixel 7'], storageState: STORAGE_STATE.advisor },
+    },
+    {
+      // Phase 6's analytics. As OWNER, because the backfill is owner-only and
+      // the shop overview is an owner's screen — and because the point of the
+      // "check these numbers" button is that the person being asked to believe
+      // the figures can make the system derive them again.
+      name: 'analytics',
+      testMatch: /analytics\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE.owner },
+    },
+    {
+      // An owner reads their numbers on the same phone the digest arrives on.
+      name: 'analytics-mobile',
+      testMatch: /analytics\.spec\.ts/,
+      dependencies: ['setup'],
+      use: { ...devices['Pixel 7'], storageState: STORAGE_STATE.owner },
     },
     {
       // The inbox is read on a phone at a counter more often than on a desk.

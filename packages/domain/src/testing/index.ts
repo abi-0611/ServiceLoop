@@ -12,5 +12,8 @@ export * from './in-memory-agent';
 export * from './in-memory-intake';
 export * from './in-memory-messaging';
 export * from './in-memory-status';
+export * from './in-memory-retention';
+export * from './in-memory-voice';
 export * from './in-memory-delivery';
 export * from './loop-harness';
+export * from './retention-harness';

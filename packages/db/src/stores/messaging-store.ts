@@ -641,6 +641,17 @@ export class PgConsentStore implements ConsentStore<Tx> {
    * update — so the history of what a customer agreed to and when survives
    * intact for a regulator, while the gate only ever reads the newest.
    */
+  /**
+   * The latest row per purpose — newest wins.
+   *
+   * The `id` tiebreak is load-bearing rather than defensive. `created_at` is
+   * written from the *service's* clock, so two decisions recorded in one
+   * instant — a batch, a test, a demo on a frozen clock, an opt-out and its
+   * acknowledgement inside one transaction — tie, and Postgres is then free to
+   * return either. "Either" is the wrong answer to "does this customer
+   * consent?". UUIDv7 is monotonic within a process, so the later write sorts
+   * later and the registry answers with what the customer last said.
+   */
   async current(
     tx: Tx,
     shopId: string,
@@ -655,7 +666,7 @@ export class PgConsentStore implements ConsentStore<Tx> {
       select distinct on (purpose) purpose, status, granted_at, revoked_at
       from consents
       where shop_id = ${shopId} and customer_id = ${customerId}
-      order by purpose, created_at desc
+      order by purpose, created_at desc, id desc
     `);
 
     return rows.rows.map((row) => ({

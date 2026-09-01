@@ -28,6 +28,7 @@ import type {
   ConsentStore,
   ConversationStore,
   MessageStore,
+  RetentionFrequencyReader,
 } from './ports';
 import { isWindowOpen } from './session';
 import type { ConversationSnapshot, OutboundContent } from './types';
@@ -175,6 +176,21 @@ export interface OutboundGateDeps<Tx> {
   readonly audit: AuditAppender<Tx>;
   readonly outbox: OutboxWriter<Tx>;
   readonly sender: ChannelSender;
+  /**
+   * The retention floor and the service-recovery freeze (phase 6.1 / 6.4).
+   *
+   * Optional, and its absence is not a degraded mode: a deployment without the
+   * retention module has no retention traffic, so there is nothing for a
+   * retention floor to apply to. What it is *not* is a knob — a build that has
+   * retention wired passes this, and every retention touch is then measured
+   * against the shop's twenty-one-day minimum here, in the frequency layer,
+   * rather than in whichever composer happened to produce the message.
+   *
+   * That placement is the phase's own requirement and it earns its keep: a
+   * fifth retention flow written next year inherits the floor without its
+   * author knowing the floor exists.
+   */
+  readonly retention?: RetentionFrequencyReader<Tx>;
   readonly clock?: Clock;
 }
 
@@ -540,7 +556,65 @@ export class OutboundGate<Tx> {
       { sentAt, isReply: request.isReply === true },
       preflight.now,
     );
-    return verdict.allowed ? { kind: 'send' } : toBlock(verdict);
+    if (!verdict.allowed) return toBlock(verdict);
+
+    return this.retentionDecision(tx, request, preflight, customerId);
+  }
+
+  /**
+   * The two rules that apply to retention traffic and to nothing else
+   * (phases 6.1 and 6.4).
+   *
+   * **The freeze comes first.** A customer who has just told the shop their
+   * visit went badly is not somebody to sell to, and the hold stands until an
+   * advisor has closed the recovery task. It refuses every purpose and every
+   * trigger, because "we froze retention but the win-back still went out" is
+   * the failure this exists to make impossible.
+   *
+   * **Then the floor.** At least `minDaysBetweenTouches` between *any* two
+   * retention touches to one person — re-pitches, service reminders, document
+   * reminders and win-backs together, which is why it is measured from the
+   * retention store rather than from `messages`. Four flows each respecting
+   * their own cadence and jointly writing weekly is precisely the outcome a
+   * per-flow limit produces and this one does not.
+   *
+   * Acknowledgements are exempt, for the reason every other acknowledgement is:
+   * a customer who taps "Not interested" and hears nothing assumes it did not
+   * work and taps again.
+   */
+  private async retentionDecision(
+    tx: Tx,
+    request: OutboundRequest,
+    preflight: Preflight,
+    customerId: string,
+  ): Promise<Decision> {
+    if (request.flow !== 'retention') return { kind: 'send' };
+    if (request.isAcknowledgement === true) return { kind: 'send' };
+
+    const reader = this.deps.retention;
+    if (reader === undefined) return { kind: 'send' };
+
+    const facts = await reader.facts(tx, request.shopId, customerId);
+
+    if (facts.frozenReason !== null) {
+      return {
+        kind: 'block',
+        code: 'RETENTION_FROZEN',
+        reason: `Retention is on hold for this customer: ${facts.frozenReason}`,
+      };
+    }
+
+    const minDays = preflight.config.retention.minDaysBetweenTouches;
+    if (facts.lastTouchAt === null) return { kind: 'send' };
+
+    const daysSince = (preflight.now.getTime() - facts.lastTouchAt.getTime()) / 86_400_000;
+    if (daysSince >= minDays) return { kind: 'send' };
+
+    return {
+      kind: 'block',
+      code: 'RETENTION_FLOOR_NOT_ELAPSED',
+      reason: `Only ${Math.floor(daysSince)} day(s) since the last retention touch; this shop requires ${minDays}`,
+    };
   }
 
   private quietHoursDecision(

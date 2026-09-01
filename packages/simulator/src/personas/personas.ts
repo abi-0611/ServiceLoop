@@ -1,5 +1,4 @@
-import { MockLlmAdapter } from '@serviceloop/adapters';
-import { deterministicJudge } from './judge';
+import { MockLlmAdapter, deterministicJudge } from '@serviceloop/adapters';
 import { sourcesFor } from '@serviceloop/agent-core';
 import {
   APPROVAL_ACTION_IDS,

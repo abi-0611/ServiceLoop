@@ -21,7 +21,10 @@
     "eval:ocr": "tsx src/ocr/eval.ts",
     "sim": "tsx src/cli/sim.ts",
     "demo:phase3": "tsx src/scenarios/phase3-demo.ts",
-    "demo:phase4": "tsx src/scenarios/phase4-demo.ts"
+    "demo:phase4": "tsx src/scenarios/phase4-demo.ts",
+    "sim:voice": "tsx src/cli/sim-voice.ts",
+    "demo:phase5": "tsx src/scenarios/phase5-demo.ts",
+    "demo:phase6": "tsx src/scenarios/phase6-demo.ts"
   },
   "dependencies": {
     "@serviceloop/adapters": "workspace:*",

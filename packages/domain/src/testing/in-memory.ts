@@ -56,6 +56,8 @@ export interface LedgerRow {
   readonly kind: 'DECLINED' | 'DEFERRED';
   readonly reason: string;
   readonly followUpAfter: Date | null;
+  /** When the customer said no, from the transition's own clock. */
+  readonly at: Date;
 }
 
 interface WorldSnapshot {

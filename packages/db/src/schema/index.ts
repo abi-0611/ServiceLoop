@@ -6,4 +6,6 @@ export * from './enums';
 export * from './intake';
 export * from './jobs';
 export * from './ops';
+export * from './retention';
 export * from './service';
+export * from './voice';

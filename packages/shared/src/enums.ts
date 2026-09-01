@@ -245,9 +245,49 @@ export const DECLINE_KINDS = ['DECLINED', 'DEFERRED'] as const;
 export const DeclineKindSchema = enumOf(DECLINE_KINDS).schema;
 export type DeclineKind = z.infer<typeof DeclineKindSchema>;
 
-export const LEDGER_STATUSES = ['OPEN', 'RE_PITCHED', 'CONVERTED', 'CLOSED'] as const;
+/**
+ * The declined-work ledger lifecycle (phase 6.1).
+ *
+ * `open → repitched(n) → converted | expired | opted_out`, plus `CLOSED` for the
+ * item that ended for a reason none of those describe — the vehicle was sold,
+ * the card was cancelled, an advisor struck it off.
+ *
+ * `OPTED_OUT` and `EXPIRED` are separate terminal states rather than one
+ * `CLOSED`, because they mean opposite things to the shop: an expired item is
+ * revenue that went cold and may be pitched again on a future visit, and an
+ * opted-out one is a customer who said "not interested" and must never hear
+ * about that item again. Collapsing them is how a permanent refusal becomes a
+ * temporary one.
+ */
+export const LEDGER_STATUSES = [
+  'OPEN',
+  'RE_PITCHED',
+  'CONVERTED',
+  'EXPIRED',
+  'OPTED_OUT',
+  'CLOSED',
+] as const;
 export const LedgerStatusSchema = enumOf(LEDGER_STATUSES).schema;
 export type LedgerStatus = z.infer<typeof LedgerStatusSchema>;
+
+/**
+ * *Why* the customer said no (phase 6.1).
+ *
+ * Distinct from `DECLINE_KINDS`, which records what the work item's state
+ * became. This records the sentence behind it, because the four reasons need
+ * four different follow-ups: a deferral is a timing problem the horizon solves,
+ * a price objection needs the owner, and distrust needs evidence rather than
+ * another quote. `other` exists so a technician is never forced to mislabel one.
+ */
+export const DECLINE_REASONS = [
+  'customer_deferred',
+  'customer_partial',
+  'price',
+  'distrust',
+  'other',
+] as const;
+export const DeclineReasonSchema = enumOf(DECLINE_REASONS).schema;
+export type DeclineReason = z.infer<typeof DeclineReasonSchema>;
 
 /** The customer-facing objectives that own an escalation ladder (L3). */
 export const OBJECTIVES = [
@@ -326,6 +366,16 @@ export const AGENT_OBJECTIVES = [
    * elsewhere rather than being improvised.
    */
   'answer_status',
+  /**
+   * Phase 6.3 — re-pitching work the customer already declined once.
+   *
+   * Its own objective rather than a flavour of `request_approval`, because the
+   * two are constrained differently: a re-pitch may only restate evidence that
+   * already exists from the original visit and may only quote the price that
+   * was already quoted. It is the one objective whose whole job is *not* to
+   * find something new to say.
+   */
+  'repitch_declined_item',
 ] as const;
 export const AgentObjectiveSchema = enumOf(AGENT_OBJECTIVES).schema;
 export type AgentObjective = z.infer<typeof AgentObjectiveSchema>;
@@ -554,3 +604,281 @@ export const GATE_PASS_VERIFY_RESULTS = [
 ] as const;
 export const GatePassVerifyResultSchema = enumOf(GATE_PASS_VERIFY_RESULTS).schema;
 export type GatePassVerifyResult = z.infer<typeof GatePassVerifyResultSchema>;
+
+/* -------------------------------------------------------------------------- *
+ * Phase 5 — voice layer
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Who placed the call.
+ *
+ * `OUTBOUND` is the approval rung dialling a customer; `INBOUND` is the shop's
+ * published line ringing. The distinction is not cosmetic: an outbound call is
+ * a business initiation and passes the consent gate before a single packet
+ * leaves, while an inbound call is a customer who chose to ring and needs no
+ * permission to be answered.
+ */
+export const CALL_DIRECTIONS = ['OUTBOUND', 'INBOUND'] as const;
+export const CallDirectionSchema = enumOf(CALL_DIRECTIONS).schema;
+export type CallDirection = z.infer<typeof CallDirectionSchema>;
+
+/**
+ * The call's lifecycle, as the telephony port reports it.
+ *
+ * `BLOCKED` is a call that was never placed — revoked consent, a cost cap, or
+ * the kill switch. It is a status rather than an absence because a rung that
+ * decided not to dial is a fact the ladder and the audit trail both need.
+ */
+export const CALL_STATUSES = [
+  'BLOCKED',
+  'ORIGINATING',
+  'RINGING',
+  'IN_PROGRESS',
+  'BRIDGING',
+  'COMPLETED',
+  'FAILED',
+] as const;
+export const CallStatusSchema = enumOf(CALL_STATUSES).schema;
+export type CallStatus = z.infer<typeof CallStatusSchema>;
+
+/**
+ * How the call ended, in terms of what it achieved.
+ *
+ * Phase 6 aggregates these into containment and handoff rates, so they name
+ * *outcomes* rather than hang-up causes: `DECISION_RECORDED` and
+ * `ANSWERED_FROM_STATE` are the two ways a call closed a loop, `BRIDGED` is the
+ * one that reached a person on purpose, and `NO_ANSWER` is the one the retry
+ * schedule exists for.
+ */
+export const CALL_OUTCOMES = [
+  'DECISION_RECORDED',
+  'ANSWERED_FROM_STATE',
+  'BOOKING_DRAFTED',
+  'BRIDGED',
+  'ADVISOR_TASK_RAISED',
+  'NO_ANSWER',
+  'BUSY',
+  'CUSTOMER_HUNG_UP',
+  'PIPELINE_FAILURE',
+  'BUDGET_EXHAUSTED',
+  'NOT_PLACED',
+] as const;
+export const CallOutcomeSchema = enumOf(CALL_OUTCOMES).schema;
+export type CallOutcome = z.infer<typeof CallOutcomeSchema>;
+
+/** Who spoke a turn. `SYSTEM` covers non-removable script segments and fillers. */
+export const CALL_TURN_ROLES = ['AGENT', 'CALLER', 'SYSTEM', 'ADVISOR'] as const;
+export const CallTurnRoleSchema = enumOf(CALL_TURN_ROLES).schema;
+export type CallTurnRole = z.infer<typeof CallTurnRoleSchema>;
+
+/**
+ * What an inbound caller wanted (phase 5.4b).
+ *
+ * `OTHER` is deliberately a first-class answer rather than a wastebasket: it is
+ * the classification that routes to a person, and a line that never says "I do
+ * not know what you want" is a line that guesses.
+ */
+export const VOICE_INTENTS = ['STATUS', 'APPROVAL_RESPONSE', 'BOOKING', 'OTHER'] as const;
+export const VoiceIntentSchema = enumOf(VOICE_INTENTS).schema;
+export type VoiceIntent = z.infer<typeof VoiceIntentSchema>;
+
+/**
+ * Why the call script stopped talking.
+ *
+ * Every one of these has a defined closing behaviour — there is no ending in
+ * which the line simply goes quiet.
+ */
+export const CALL_END_REASONS = [
+  'OBJECTIVE_MET',
+  'CALLER_HUNG_UP',
+  'HANDOFF_BRIDGED',
+  'GRACEFUL_EXIT',
+  'STEP_CAP',
+  'TIME_CAP',
+  'PIPELINE_FAILURE',
+  'KILL_SWITCH',
+  'PROVIDER_ERROR',
+] as const;
+export const CallEndReasonSchema = enumOf(CALL_END_REASONS).schema;
+export type CallEndReason = z.infer<typeof CallEndReasonSchema>;
+
+/**
+ * Consent and disclosure facts recorded per call (phase 5.6).
+ *
+ * Stored as an ordered list of events with timestamps rather than booleans,
+ * because the compliance question is not "was the notice given" but "was it
+ * given *before* the recorder started".
+ */
+export const CALL_CONSENT_FACTS = [
+  'AI_DISCLOSURE_PLAYED',
+  'RECORDING_NOTICE_PLAYED',
+  'RECORDING_STARTED',
+  'RECORDING_STOPPED',
+  'CALLER_OBJECTED_TO_RECORDING',
+] as const;
+export const CallConsentFactSchema = enumOf(CALL_CONSENT_FACTS).schema;
+export type CallConsentFact = z.infer<typeof CallConsentFactSchema>;
+
+/**
+ * The keypad. `*` and `#` are included because an elderly caller's phone has
+ * them and a menu that ignores two of twelve keys feels broken.
+ */
+export const DTMF_DIGITS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#'] as const;
+export const DtmfDigitSchema = enumOf(DTMF_DIGITS).schema;
+export type DtmfDigit = (typeof DTMF_DIGITS)[number];
+
+/**
+ * How a turn was heard: spoken words, or a keypad press.
+ *
+ * `DTMF` turns skip the recogniser entirely, which is the whole point of 5.5 —
+ * a caller on a noisy line can complete an approval without the system ever
+ * needing to understand a word they said.
+ */
+export const CALL_INPUT_MODES = ['SPEECH', 'DTMF', 'NONE'] as const;
+export const CallInputModeSchema = enumOf(CALL_INPUT_MODES).schema;
+export type CallInputMode = z.infer<typeof CallInputModeSchema>;
+
+/**
+ * The latency stages a turn is measured in (phase 5.3).
+ *
+ * Named stages rather than one number, because "the call felt slow" has four
+ * possible causes and only the stage markers separate them.
+ */
+export const VOICE_LATENCY_STAGES = [
+  'SPEECH_END_TO_FINAL',
+  'FINAL_TO_PLAN',
+  'PLAN_TO_FIRST_SYNTH_BYTE',
+  'FIRST_SYNTH_BYTE_TO_SPEECH_START',
+  'SPEECH_END_TO_SPEECH_START',
+] as const;
+export const VoiceLatencyStageSchema = enumOf(VOICE_LATENCY_STAGES).schema;
+export type VoiceLatencyStage = z.infer<typeof VoiceLatencyStageSchema>;
+
+/* -------------------------------------------------------------------------- *
+ * Phase 6 — retention, feedback, digest & analytics
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Why a retention touch is going out (phase 6.2).
+ *
+ * The trigger is stored on the touch rather than inferred from its timing,
+ * because the four are worth telling apart in the analytics: a season trigger
+ * that converts twice as often as a time-elapsed one is a fact about when to
+ * pitch brakes, and a system that only records "a re-pitch was sent" can never
+ * learn it.
+ *
+ * `odometer` is only ever raised from a reading the *customer* volunteered.
+ * ServiceLoop does not read anybody's telematics.
+ */
+export const RETENTION_TRIGGERS = [
+  'next_visit',
+  'time_elapsed',
+  'season',
+  'odometer',
+  'service_due',
+  'document_expiry',
+  'win_back',
+  'manual',
+] as const;
+export const RetentionTriggerSchema = enumOf(RETENTION_TRIGGERS).schema;
+export type RetentionTrigger = z.infer<typeof RetentionTriggerSchema>;
+
+/**
+ * What became of a scheduled retention touch.
+ *
+ * `SKIPPED` and `BLOCKED` are separate on purpose. Skipped is the retention
+ * engine's own decision — the 21-day floor, the per-item cap, a frozen
+ * customer — and blocked is the OutboundGate refusing, which is a consent or a
+ * cap problem. Both are silence from the customer's side and completely
+ * different problems from the shop's.
+ */
+export const RETENTION_TOUCH_STATUSES = [
+  'SCHEDULED',
+  'SENT',
+  'HELD',
+  'SKIPPED',
+  'BLOCKED',
+  'CANCELLED',
+] as const;
+export const RetentionTouchStatusSchema = enumOf(RETENTION_TOUCH_STATUSES).schema;
+export type RetentionTouchStatus = z.infer<typeof RetentionTouchStatusSchema>;
+
+/**
+ * How the customer answered a re-pitch (phase 6.3).
+ *
+ * Three one-tap answers and nothing else. "Remind me later" counts as a
+ * re-pitch against the item's cap, which is the whole reason it is a recorded
+ * response rather than silence: a customer who defers twice has been asked
+ * twice, and the cap has to see both.
+ */
+export const REPITCH_RESPONSES = ['BOOK', 'REMIND_LATER', 'NOT_INTERESTED'] as const;
+export const RepitchResponseSchema = enumOf(REPITCH_RESPONSES).schema;
+export type RepitchResponse = z.infer<typeof RepitchResponseSchema>;
+
+/**
+ * The one-tap feedback face (phase 6.4).
+ *
+ * Three, not five stars: a scale invites a considered answer and this is a
+ * question asked by WhatsApp the day after a service. What the shop needs to
+ * know is which of three things to do next — thank and ask for a review, thank
+ * and log, or wake the owner up.
+ */
+export const FEEDBACK_SENTIMENTS = ['POSITIVE', 'NEUTRAL', 'NEGATIVE'] as const;
+export const FeedbackSentimentSchema = enumOf(FEEDBACK_SENTIMENTS).schema;
+export type FeedbackSentiment = z.infer<typeof FeedbackSentimentSchema>;
+
+export const FEEDBACK_STATUSES = ['SCHEDULED', 'ASKED', 'ANSWERED', 'EXPIRED', 'SKIPPED'] as const;
+export const FeedbackStatusSchema = enumOf(FEEDBACK_STATUSES).schema;
+export type FeedbackStatus = z.infer<typeof FeedbackStatusSchema>;
+
+/** Documents a customer may ask the shop to track for them (phase 6.5). */
+export const DOCUMENT_KINDS = ['INSURANCE', 'PUC'] as const;
+export const DocumentKindSchema = enumOf(DOCUMENT_KINDS).schema;
+export type DocumentKind = z.infer<typeof DocumentKindSchema>;
+
+/**
+ * What a scheduled reminder is about (phase 6.5).
+ *
+ * `SERVICE_DUE` rides SERVICE consent — it is about a vehicle the shop worked
+ * on. The two document reminders are strictly MARKETING, and only for a
+ * customer who enrolled: a shop that has a customer's insurance date because it
+ * saw the papers has not thereby been asked to remind them about it.
+ */
+export const REMINDER_KINDS = ['SERVICE_DUE', 'INSURANCE_EXPIRY', 'PUC_EXPIRY'] as const;
+export const ReminderKindSchema = enumOf(REMINDER_KINDS).schema;
+export type ReminderKind = z.infer<typeof ReminderKindSchema>;
+
+export const DIGEST_KINDS = ['DAILY', 'WEEKLY'] as const;
+export const DigestKindSchema = enumOf(DIGEST_KINDS).schema;
+export type DigestKind = z.infer<typeof DigestKindSchema>;
+
+/**
+ * The exceptions that interrupt an owner in realtime rather than waiting for
+ * the evening digest (phase 6.8).
+ *
+ * Five, and the list is deliberately short: an alert stream that fires for
+ * everything is one an owner mutes, and a muted alert stream is worse than none
+ * because the shop believes it has one.
+ */
+export const ALERT_KINDS = [
+  'APPROVAL_STUCK',
+  'NEGATIVE_FEEDBACK',
+  'PAYMENT_FAILED_TWICE',
+  'VOICE_KILL_SWITCH',
+  'SILENT_BAY_REPEAT',
+] as const;
+export const AlertKindSchema = enumOf(ALERT_KINDS).schema;
+export type AlertKind = z.infer<typeof AlertKindSchema>;
+
+/**
+ * How a metric rollup came to exist.
+ *
+ * `LIVE` is the nightly (or on-demand) fold over the day's events; `BACKFILL`
+ * is `recompute --from` replaying the log. They must produce identical numbers
+ * — that equality is the audit story behind the "₹ recovered" claim — so the
+ * provenance is recorded rather than assumed, and a rollup that disagrees with
+ * its own recomputation can be found.
+ */
+export const ROLLUP_SOURCES = ['LIVE', 'BACKFILL'] as const;
+export const RollupSourceSchema = enumOf(ROLLUP_SOURCES).schema;
+export type RollupSource = z.infer<typeof RollupSourceSchema>;

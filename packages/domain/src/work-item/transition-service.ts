@@ -143,6 +143,7 @@ export class WorkItemTransitionService<Tx> {
         kind: event === 'DECLINE' ? 'DECLINED' : 'DEFERRED',
         reason,
         followUpAfter,
+        at: now,
       });
     }
 
@@ -177,7 +178,14 @@ export class WorkItemTransitionService<Tx> {
         to: target,
         event,
         actor: { type: actor.type, id: actor.id },
-        meta: { ...(request.meta ?? {}) },
+        // The reason rides `meta` rather than a payload field of its own.
+        //
+        // Phase 6.1 needs it: the ledger classifies a decline into one of four
+        // reasons that need four different follow-ups, and it consumes this
+        // event rather than being called from inside this transaction. `meta`
+        // is `z.record(z.unknown())`, so carrying it is additive — the
+        // alternative was widening a payload every phase-1 producer writes.
+        meta: { ...(request.meta ?? {}), ...(reason === '' ? {} : { reason }) },
       },
     };
     await this.deps.outbox.enqueue(tx, envelope);

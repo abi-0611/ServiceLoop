@@ -1,5 +1,5 @@
 import { forwardRef, Module } from '@nestjs/common';
-import type { AgentRuntime, LoopRuntime } from '@serviceloop/agent-core';
+import type { AgentRuntime, LoopRuntime, RetentionRuntime } from '@serviceloop/agent-core';
 import {
   createChannelPorts,
   createMediaPipeline,
@@ -61,6 +61,7 @@ import {
   OUTBOUND_GATE,
   OUTBOX_SERVICE,
   REDIS,
+  RETENTION_RUNTIME,
   SESSION_SERVICE,
   STORAGE,
   UNIT_OF_WORK,
@@ -68,6 +69,7 @@ import {
 } from '../infra/tokens';
 import { LoopModule } from '../loop/loop.module';
 import { agentProviders } from './agent.providers';
+import { retentionProviders } from './retention.providers';
 import { ConversationsController } from './conversations.controller';
 import { IntakeController } from './intake.controller';
 import { MediaController } from './media.controller';
@@ -112,6 +114,7 @@ import { WhatsAppWebhookController } from './whatsapp.controller';
   ],
   providers: [
     ...agentProviders,
+    ...retentionProviders,
     ShopResolver,
     {
       provide: CHANNEL_PORTS,
@@ -240,6 +243,7 @@ import { WhatsAppWebhookController } from './whatsapp.controller';
         consents: ConsentService<Tx>,
         agent: AgentRuntime<Tx>,
         loop: LoopRuntime<Tx>,
+        retention: RetentionRuntime<Tx>,
       ) => {
         const conversations = new PgConversationStore();
         const messages = new PgMessageStore();
@@ -276,6 +280,20 @@ import { WhatsAppWebhookController } from './whatsapp.controller';
           // and pickup-slot taps land back here.
           technicianNotes: loop.notes,
           slots: loop.delivery,
+          // Phase 6: the re-pitch answers, the feedback faces, the document
+          // enrolment, the MARKETING ask and the owner's "I'll call".
+          retention: retention.replies,
+          // A customer's spoken feedback comment. Narrower than the technician
+          // note path on purpose — this can never move a job card.
+          transcribeVoiceNote: async (note) => {
+            const transcript = await ports.speech.transcribe({
+              shopId: note.shopId,
+              bytes: note.bytes,
+              contentType: note.contentType,
+              languageHint: note.languageHint,
+            });
+            return transcript.text.trim().length === 0 ? null : transcript.text;
+          },
           consoleUrl: getEnv().CONSOLE_URL,
         });
       },
@@ -292,6 +310,7 @@ import { WhatsAppWebhookController } from './whatsapp.controller';
         CONSENT_SERVICE,
         AGENT_RUNTIME,
         LOOP_RUNTIME,
+        RETENTION_RUNTIME,
       ],
     },
     {
@@ -326,6 +345,7 @@ import { WhatsAppWebhookController } from './whatsapp.controller';
     // second one: `agent.tasks` is what the balance ladder hands off to, and
     // two task services would be two advisor queues.
     AGENT_RUNTIME,
+    RETENTION_RUNTIME,
     CHANNEL_PORTS,
     WHATSAPP_PORT,
     OUTBOUND_GATE,

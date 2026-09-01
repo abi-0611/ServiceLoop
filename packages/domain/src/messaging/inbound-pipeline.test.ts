@@ -41,6 +41,7 @@ import { CONSENT_ACTION_IDS, ConsentCaptureService } from './consent-capture';
 import { DeferredSendService } from './deferred';
 import { InboundHandler, type FetchedMedia, type MediaFetchPort } from './inbound-handler';
 import type {
+  RetentionReplyPort,
   SlotReplyPort,
   StatusTapInput,
   TechnicianNoteCaptureInput,
@@ -48,6 +49,12 @@ import type {
   TechnicianNoteReadInput,
   TechnicianNoteReading,
 } from './ports';
+import {
+  DOCUMENT_ACTION_IDS,
+  FEEDBACK_ACTION_IDS,
+  MARKETING_ACTION_IDS,
+  REPITCH_ACTION_IDS,
+} from './retention-actions';
 import { SLOT_ACTION_IDS, STATUS_ACTION_IDS } from './status-actions';
 import type { CaptureOutcome, ParsedStatusSignal } from '../status/types';
 import {
@@ -299,12 +306,100 @@ class ScriptedSlots implements SlotReplyPort {
   }
 }
 
+class ScriptedRetention implements RetentionReplyPort {
+  readonly repitches: { ledgerItemId: string; response: string }[] = [];
+  readonly feedback: { feedbackId: string; sentiment: string }[] = [];
+  readonly comments: { customerId: string; comment: string; viaVoiceNote: boolean }[] = [];
+  readonly enrolments: { vehicleId: string; enrol: boolean }[] = [];
+  readonly marketing: { customerId: string; decision: string; evidence: string }[] = [];
+  readonly claims: { approvalId: string; claimedByStaffId: string | null }[] = [];
+  readonly odometer: { customerId: string; text: string }[] = [];
+
+  /** Set when a customer has an open feedback record a comment may attach to. */
+  acceptComments = false;
+  /** Set when the customer has been asked for a mileage recently. */
+  odometerReading: number | null = null;
+
+  async answerRepitch(input: {
+    readonly ledgerItemId: string;
+    readonly response: string;
+  }): Promise<{ handled: boolean; detail: string }> {
+    this.repitches.push({ ledgerItemId: input.ledgerItemId, response: input.response });
+    return { handled: true, detail: input.response };
+  }
+
+  async answerFeedback(input: {
+    readonly feedbackId: string;
+    readonly sentiment: string;
+  }): Promise<{ handled: boolean; detail: string }> {
+    this.feedback.push({ feedbackId: input.feedbackId, sentiment: input.sentiment });
+    return { handled: true, detail: input.sentiment };
+  }
+
+  async attachFeedbackComment(input: {
+    readonly customerId: string;
+    readonly comment: string;
+    readonly viaVoiceNote: boolean;
+  }): Promise<boolean> {
+    if (!this.acceptComments) return false;
+    this.comments.push({
+      customerId: input.customerId,
+      comment: input.comment,
+      viaVoiceNote: input.viaVoiceNote,
+    });
+    return true;
+  }
+
+  async answerDocumentEnrolment(input: {
+    readonly vehicleId: string;
+    readonly enrol: boolean;
+  }): Promise<{ handled: boolean; detail: string }> {
+    this.enrolments.push({ vehicleId: input.vehicleId, enrol: input.enrol });
+    return { handled: true, detail: input.enrol ? 'enrolled' : 'declined' };
+  }
+
+  async answerMarketingConsent(input: {
+    readonly customerId: string;
+    readonly decision: string;
+    readonly evidence: string;
+  }): Promise<{ handled: boolean; detail: string }> {
+    this.marketing.push({
+      customerId: input.customerId,
+      decision: input.decision,
+      evidence: input.evidence,
+    });
+    return { handled: true, detail: input.decision };
+  }
+
+  async recordVolunteeredOdometer(input: {
+    readonly customerId: string;
+    readonly text: string;
+  }): Promise<{ vehicleId: string; odometerKm: number } | null> {
+    this.odometer.push({ customerId: input.customerId, text: input.text });
+    return this.odometerReading === null
+      ? null
+      : { vehicleId: 'vehicle-1', odometerKm: this.odometerReading };
+  }
+
+  async claimDigestLine(input: {
+    readonly approvalId: string;
+    readonly claimedByStaffId: string | null;
+  }): Promise<{ handled: boolean; detail: string }> {
+    this.claims.push({
+      approvalId: input.approvalId,
+      claimedByStaffId: input.claimedByStaffId,
+    });
+    return { handled: true, detail: 'claimed' };
+  }
+}
+
 /* -------------------------------------------------------------------------- *
  * Harness
  * -------------------------------------------------------------------------- */
 
 interface World {
   readonly harness: DomainTestHarness;
+  readonly retention: ScriptedRetention;
   readonly intakeWorld: IntakeWorld;
   readonly handler: InboundHandler<MemoryTx>;
   readonly firstContact: ConsentCaptureService<MemoryTx>;
@@ -442,6 +537,7 @@ function build(configPatch: Partial<ShopConfig> = {}): World {
 
   const notes = new ScriptedTechnicianNotes();
   const slots = new ScriptedSlots();
+  const retention = new ScriptedRetention();
 
   const handler = new InboundHandler<MemoryTx>({
     uow: harness.uow,
@@ -459,6 +555,8 @@ function build(configPatch: Partial<ShopConfig> = {}): World {
     directory: harness.directory,
     technicianNotes: notes,
     slots,
+    retention,
+    transcribeVoiceNote: async () => 'the noise is still there',
     consoleUrl: 'http://localhost:3000',
     clock,
   });
@@ -490,6 +588,7 @@ function build(configPatch: Partial<ShopConfig> = {}): World {
     gate,
     notes,
     slots,
+    retention,
     deferred: new DeferredSendService<MemoryTx>({ uow: harness.uow, messages, gate, clock }),
     setNow: (at) => {
       current = new Date(at);
@@ -1168,5 +1267,112 @@ describe('empty draft', () => {
     const draft = emptyJobCardDraft();
     expect(JobCardDraftSchema.safeParse(draft).success).toBe(true);
     expect(draft.vehicle.registration.confidence).toBe(0);
+  });
+});
+
+/* ========================================================================== *
+ * Phase 6 — the five taps and the two replies that follow them
+ * ========================================================================== */
+
+describe('phase 6 taps', () => {
+  let world: World;
+
+  beforeEach(async () => {
+    world = build();
+  });
+
+  it('routes each of the five ids to its own service, carrying its subject', async () => {
+    await run(
+      world,
+      inbound({ kind: 'INTERACTIVE', replyId: REPITCH_ACTION_IDS.book('ledger-9') }),
+    );
+    await run(
+      world,
+      inbound({ kind: 'INTERACTIVE', replyId: FEEDBACK_ACTION_IDS.negative('feedback-3') }),
+    );
+    await run(
+      world,
+      inbound({ kind: 'INTERACTIVE', replyId: DOCUMENT_ACTION_IDS.enrol('vehicle-4') }),
+    );
+    await run(world, inbound({ kind: 'INTERACTIVE', replyId: MARKETING_ACTION_IDS.grant }));
+
+    expect(world.retention.repitches).toEqual([
+      { ledgerItemId: 'ledger-9', response: 'BOOK' },
+    ]);
+    expect(world.retention.feedback).toEqual([
+      { feedbackId: 'feedback-3', sentiment: 'NEGATIVE' },
+    ]);
+    expect(world.retention.enrolments).toEqual([{ vehicleId: 'vehicle-4', enrol: true }]);
+    expect(world.retention.marketing).toEqual([
+      {
+        customerId: expect.any(String) as unknown as string,
+        decision: 'GRANT',
+        evidence: MARKETING_ACTION_IDS.grant,
+      },
+    ]);
+  });
+
+  it('never lets a retention tap fall through to the intake pipeline', async () => {
+    // The failure this exists to prevent: "Not interested" opening a job card.
+    const before = world.intakeWorld.drafts.size;
+    const outcome = await run(
+      world,
+      inbound({
+        kind: 'INTERACTIVE',
+        replyId: REPITCH_ACTION_IDS.notInterested('ledger-9'),
+        replyTitle: 'Not interested',
+      }),
+    );
+
+    expect(world.intakeWorld.drafts.size).toBe(before);
+    expect(outcome.draftId).toBeNull();
+    expect(world.retention.repitches).toEqual([
+      { ledgerItemId: 'ledger-9', response: 'NOT_INTERESTED' },
+    ]);
+  });
+
+  it('attaches the sentence after the face to that visit, not to a new job card', async () => {
+    world.retention.acceptComments = true;
+    const before = world.intakeWorld.drafts.size;
+
+    const outcome = await run(world, inbound({ text: 'The noise came back on the way home.' }));
+
+    expect(world.retention.comments).toEqual([
+      {
+        customerId: expect.any(String) as unknown as string,
+        comment: 'The noise came back on the way home.',
+        viaVoiceNote: false,
+      },
+    ]);
+    expect(world.intakeWorld.drafts.size).toBe(before);
+    expect(outcome.draftId).toBeNull();
+  });
+
+  it('leaves an ordinary message alone when no feedback is open', async () => {
+    world.retention.acceptComments = false;
+    await run(world, inbound({ text: 'Is the car ready?' }));
+    expect(world.retention.comments).toEqual([]);
+  });
+
+  it('answers the odometer ask and thanks them, without opening anything', async () => {
+    world.retention.odometerReading = 62_000;
+    const outcome = await run(world, inbound({ text: '62000' }));
+
+    expect(world.retention.odometer).toEqual([
+      { customerId: expect.any(String) as unknown as string, text: '62000' },
+    ]);
+    expect(outcome.draftId).toBeNull();
+    expect(world.sender.sent.at(-1)?.content).toMatchObject({ kind: 'text' });
+  });
+
+  it('logs a tap it cannot act on rather than acting on it', async () => {
+    // A malformed id: recognised as a retention prefix, refused because it
+    // names no item, and still never reaching the intake pipeline.
+    const outcome = await run(
+      world,
+      inbound({ kind: 'INTERACTIVE', replyId: 'repitch:no:' }),
+    );
+    expect(outcome.draftId).toBeNull();
+    expect(outcome.trace.some((step) => step.detail.includes('Unrecognised reply id'))).toBe(true);
   });
 });

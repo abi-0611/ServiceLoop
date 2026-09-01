@@ -29,6 +29,7 @@ import {
   InMemoryMessageStore,
   RecordingChannelSender,
 } from './in-memory-messaging';
+import type { RetentionFrequencyReader } from '../messaging/ports';
 import {
   InMemoryCardResolver,
   InMemoryEtaStore,
@@ -99,6 +100,15 @@ export interface LoopHarness {
 export interface LoopHarnessOptions {
   readonly configPatch?: Partial<ShopConfig>;
   readonly language?: Language;
+  /**
+   * The gate's retention floor and freeze (phase 6).
+   *
+   * Passed through rather than constructed here, because the reader has to read
+   * the *same* touch and hold stores the retention services write to — a
+   * harness that built its own would let the floor and the touches disagree,
+   * which is the one thing a test about the floor must not allow.
+   */
+  readonly retention?: RetentionFrequencyReader<MemoryTx>;
 }
 
 export function createLoopHarness(options: LoopHarnessOptions = {}): LoopHarness {
@@ -319,6 +329,7 @@ export function createLoopHarness(options: LoopHarnessOptions = {}): LoopHarness
     audit: base.audit,
     outbox: base.outbox,
     sender,
+    ...(options.retention === undefined ? {} : { retention: options.retention }),
     clock,
   });
 
