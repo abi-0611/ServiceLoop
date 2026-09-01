@@ -33,6 +33,24 @@ const booleanish = (defaultValue: boolean) =>
 const intish = (defaultValue: number, min = 0, max = Number.MAX_SAFE_INTEGER) =>
   z.coerce.number().int().min(min).max(max).default(defaultValue);
 
+/**
+ * A comma-separated list. Empty and whitespace-only entries are dropped rather
+ * than becoming an empty-string origin, which would match nothing and look
+ * like a configuration that was applied when it was not.
+ */
+const csv = () =>
+  z
+    .string()
+    .optional()
+    .transform((raw): readonly string[] =>
+      raw === undefined
+        ? []
+        : raw
+            .split(',')
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0),
+    );
+
 const base64Key = (bytes: number) =>
   z.string().refine(
     (value) => {
@@ -44,6 +62,42 @@ const base64Key = (bytes: number) =>
     },
     { message: `Expected a base64-encoded ${bytes}-byte key` },
   );
+
+/**
+ * The retired-key ring: `{"<keyId>":"<base64 32-byte key>"}`.
+ *
+ * Parsed rather than merely stored, so a malformed ring fails at boot instead
+ * of at the first read of a row written under a rotated key - which would be
+ * days later, on a customer lookup, in production.
+ */
+const keyRingJson = () =>
+  z
+    .string()
+    .optional()
+    .transform((raw, ctx): Readonly<Record<string, string>> => {
+      if (raw === undefined || raw.trim() === '') return {};
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'PII_KEY_RING is not valid JSON',
+        });
+        return z.NEVER;
+      }
+      const result = z.record(z.string().min(1), base64Key(32)).safeParse(parsed);
+      if (!result.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `PII_KEY_RING must map key ids to base64 32-byte keys: ${result.error.issues
+            .map((issue) => issue.message)
+            .join('; ')}`,
+        });
+        return z.NEVER;
+      }
+      return result.data;
+    });
 
 /** Development placeholders. Refused in production by the refinement below. */
 export const DEV_JWT_SECRET = 'dev-only-jwt-secret-change-me-0123456789abcdef';
@@ -79,6 +133,49 @@ export type TelephonyDriver = z.infer<typeof TelephonyDriverSchema>;
 /** The streaming half of the speech port (phase 5.2). */
 export const StreamingSpeechDriverSchema = z.enum(['mock', 'sarvam', 'google']);
 export type StreamingSpeechDriver = z.infer<typeof StreamingSpeechDriverSchema>;
+
+/**
+ * Upload scanning (phase 7.1). `none` is a *port-abstracted* no-op rather than
+ * an absent port: the scan call site exists in the media pipeline either way,
+ * so turning ClamAV on is a configuration change and not a code change.
+ */
+export const AntivirusDriverSchema = z.enum(['none', 'clamav']);
+export type AntivirusDriver = z.infer<typeof AntivirusDriverSchema>;
+
+/**
+ * The SMS rung (phase 7.3). `sandbox` records the message and returns a
+ * receipt; `dlt` posts to a TRAI-DLT-registered provider with the entity id,
+ * the registered header and the registered template id on the wire.
+ */
+export const SmsDriverSchema = z.enum(['sandbox', 'dlt']);
+export type SmsDriver = z.infer<typeof SmsDriverSchema>;
+
+/**
+ * WhatsApp conversation pricing in *paise per conversation*, by category.
+ *
+ * Paise, not rupees, for the same reason every other amount in this codebase is
+ * an integer of the smallest unit: a margin report that accumulates floating
+ * point over ten thousand conversations disagrees with itself.
+ */
+export const WaPricingSchema = z.object({
+  MARKETING: z.number().int().min(0),
+  UTILITY: z.number().int().min(0),
+  AUTHENTICATION: z.number().int().min(0),
+  SERVICE: z.number().int().min(0),
+});
+export type WaPricing = z.infer<typeof WaPricingSchema>;
+
+/**
+ * Meta's published India rates as of the 2026 card, in paise. They move; that
+ * is why the table is configuration and this is only the shipped default.
+ */
+export const DEFAULT_WA_PRICING: WaPricing = {
+  MARKETING: 78,
+  UTILITY: 11,
+  AUTHENTICATION: 12,
+  /** Service conversations are free on the current India card. */
+  SERVICE: 0,
+};
 
 /** Per-model prices in USD per million tokens, for the `llm_usage` meter. */
 export const LlmPricingSchema = z.record(
@@ -123,6 +220,19 @@ export const EnvSchema = z
     /** AES-256-GCM key for PII at rest. Rotation plan: see schema comment on `customers`. */
     PII_ENCRYPTION_KEY: base64Key(32).default(DEV_PII_KEY),
     PII_KEY_ID: z.string().min(1).default('dev-1'),
+    /**
+     * Retired PII keys, kept only so ciphertext written under them can still be
+     * read (phase 7.1 - documented key rotation with a dual-key decrypt window).
+     *
+     * A JSON object of keyId to base64 key. `PII_KEY_ID` names the key new
+     * writes use; every ciphertext carries the id it was written with, so a
+     * rotation is: add the new key to the ring *and* to `PII_ENCRYPTION_KEY`,
+     * flip `PII_KEY_ID`, let the re-encryption job drain, then drop the old
+     * entry. The window exists because the alternative - one key, flipped
+     * atomically - makes every row written a millisecond before the flip
+     * permanently unreadable.
+     */
+    PII_KEY_RING: keyRingJson(),
     /** HMAC key for the deterministic blind index that makes phone lookup possible. */
     BLIND_INDEX_KEY: base64Key(32).default(DEV_BLIND_INDEX_KEY),
 
@@ -459,6 +569,167 @@ export const EnvSchema = z
     QUEUE_MAX_ATTEMPTS: intish(5, 1, 25),
 
     DEFAULT_TIMEZONE: z.string().min(1).default('Asia/Kolkata'),
+
+    /* ===================================================================
+     * Phase 7 - production hardening.
+     * =================================================================== */
+
+    /**
+     * Which deployment this process believes it is. Only `prod` turns on the
+     * adapter allow-list check; `staging` is explicitly allowed to run a mixed
+     * real/sandbox matrix, which is the whole point of having one.
+     */
+    DEPLOY_ENV: z.enum(['local', 'staging', 'prod']).default('local'),
+
+    /**
+     * The adapters production is permitted to boot with, as `port:Adapter`
+     * pairs - `whatsapp:MetaCloudWhatsAppAdapter,llm:AnthropicLlmAdapter`.
+     *
+     * A belt to `NODE_ENV=production`'s braces, and it fails in the opposite
+     * direction: the `superRefine` rules below say "not the sandbox", this says
+     * "exactly this one". The difference matters the day somebody adds a third
+     * WhatsApp adapter and a typo in a deploy script selects it.
+     */
+    ADAPTER_ALLOWLIST: csv(),
+
+    /** Comma-separated origins the API answers CORS for. Defaults to the console. */
+    CORS_ALLOWED_ORIGINS: csv(),
+    /**
+     * Trusted reverse-proxy hops. Cloud Run puts exactly one in front of us;
+     * counting wrong means either trusting a client-supplied `X-Forwarded-For`
+     * (so a rate limit is per-attacker-header rather than per-attacker) or
+     * rate-limiting the load balancer as a single client.
+     */
+    TRUST_PROXY_HOPS: intish(1, 0, 10),
+
+    RATE_LIMIT_ENABLED: booleanish(true),
+    RATE_LIMIT_WINDOW_MS: intish(60_000, 1_000, 3_600_000),
+    /** Per client address, per window, across every route. */
+    RATE_LIMIT_GLOBAL_MAX: intish(600, 1, 1_000_000),
+    /** The OTP endpoints. Deliberately tiny: this is where accounts are taken. */
+    RATE_LIMIT_AUTH_MAX: intish(10, 1, 10_000),
+    /**
+     * Provider webhooks. Generous, because a Meta redelivery storm after an
+     * outage is legitimate traffic and dropping it loses customer messages -
+     * but not unbounded, because the endpoint is public.
+     */
+    RATE_LIMIT_WEBHOOK_MAX: intish(3_000, 1, 1_000_000),
+    /** Per authenticated shop, per window. Stops one tenant starving the rest. */
+    RATE_LIMIT_SHOP_MAX: intish(1_200, 1, 1_000_000),
+
+    /**
+     * Permits fetching loopback and private addresses. True only in the dev
+     * stack, where MinIO genuinely is on `localhost`.
+     */
+    SSRF_ALLOW_PRIVATE: booleanish(false),
+
+    ANTIVIRUS_DRIVER: AntivirusDriverSchema.default('none'),
+    CLAMAV_HOST: z.string().min(1).default('localhost'),
+    CLAMAV_PORT: intish(3310, 1, 65_535),
+    CLAMAV_TIMEOUT_MS: intish(20_000, 1_000, 300_000),
+    /**
+     * What to do when the scanner itself is unreachable.
+     *
+     * `false` (fail-open) accepts the upload and flags it; `true` (fail-closed)
+     * refuses it. The default is fail-open, and that is a considered choice
+     * rather than laziness: this is a workshop's customer sending a photo of a
+     * dashboard light, and a clamd restart that silently swallows the intake
+     * photo costs a real job card. A shop handling documents flips it.
+     */
+    ANTIVIRUS_FAIL_CLOSED: booleanish(false),
+
+    /* --- DPDP data-principal workflows (7.2) ---------------------------- */
+
+    /** How long an export archive's signed link stays valid. */
+    DPDP_EXPORT_TTL_HOURS: intish(72, 1, 720),
+    /** Published on the privacy notice as the grievance officer. */
+    DPDP_GRIEVANCE_NAME: z.string().min(1).default('The Owner'),
+    DPDP_GRIEVANCE_EMAIL: z.string().email().default('privacy@example.com'),
+    DPDP_GRIEVANCE_PHONE: z.string().min(1).default('+910000000000'),
+    /**
+     * Statutory retention for tax records, in years. GST law requires invoices
+     * to survive a deletion request; the row survives *pseudonymised*, which is
+     * the carve-out documented in `docs/privacy/retention.md`.
+     */
+    DPDP_INVOICE_RETENTION_YEARS: intish(8, 1, 30),
+    PRIVACY_NOTICE_URL: z.string().url().default('http://localhost:3000/privacy'),
+    /**
+     * How often the worker looks for approved requests whose grace window has
+     * elapsed. Two minutes rather than the fifteen the retention scan uses:
+     * somebody is waiting on the other end of this one, and the pass is a
+     * single indexed query that returns nothing on almost every tick.
+     */
+    DPDP_SCAN_MS: intish(2 * 60_000, 10_000, 60 * 60_000),
+    /** Requests executed per pass. A cascade is expensive; a burst of them more so. */
+    DPDP_BATCH_SIZE: intish(5, 1, 50),
+
+    /* --- SMS / DLT fallback (7.3) --------------------------------------- */
+
+    SMS_DRIVER: SmsDriverSchema.default('sandbox'),
+    SMS_PROVIDER_BASE_URL: z.string().url().default('https://api.sms-provider.example'),
+    /** DLT-registered sender id ("header"), assigned by the operator. */
+    SMS_SENDER_ID: z.string().min(3).max(11).optional(),
+    /** The principal entity id from the TRAI DLT registry. */
+    SMS_DLT_ENTITY_ID: z.string().min(1).optional(),
+    SMS_TIMEOUT_MS: intish(15_000, 1_000, 120_000),
+    /**
+     * May the OutboundGate drop to SMS when WhatsApp is unreachable?
+     *
+     * A kill switch rather than a preference: SMS costs money per message and
+     * carries no buttons, so a shop that would rather wait for WhatsApp to come
+     * back turns this off and the ladder falls through to an advisor task.
+     */
+    SMS_FALLBACK_ENABLED: booleanish(true),
+    /** Consecutive WhatsApp send failures before the channel is called down. */
+    CHANNEL_FAILOVER_THRESHOLD: intish(3, 1, 50),
+    /** How long the channel stays marked down before it is probed again. */
+    CHANNEL_FAILOVER_PROBE_MS: intish(60_000, 5_000, 60 * 60_000),
+
+    /**
+     * WhatsApp conversation pricing, in paise per 24-hour conversation, by
+     * category. Configuration rather than code because Meta reprices by market
+     * without asking, and a redeploy to correct a margin figure is a redeploy
+     * nobody does.
+     */
+    WA_PRICING_JSON: z
+      .string()
+      .optional()
+      .transform((raw, ctx) => {
+        if (raw === undefined) return DEFAULT_WA_PRICING;
+        try {
+          return WaPricingSchema.parse(JSON.parse(raw));
+        } catch (error) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `WA_PRICING_JSON is not a valid pricing table: ${String(error)}`,
+          });
+          return z.NEVER;
+        }
+      }),
+
+    /* --- Observability (7.4) -------------------------------------------- */
+
+    OTEL_ENABLED: booleanish(false),
+    /** 0-1. Sampled at the root span, so a trace is whole or absent. */
+    OTEL_TRACES_SAMPLER_RATIO: z.coerce.number().min(0).max(1).default(1),
+    /**
+     * Full message bodies in the logs, until this instant.
+     *
+     * A timestamp rather than a boolean, and that is the entire design: a debug
+     * flag somebody flips at 02:00 to chase a bug is a flag that is still on
+     * three months later, quietly writing customers' messages to a log sink.
+     * This one expires whether or not anybody remembers it.
+     */
+    LOG_FULL_BODIES_UNTIL: z.coerce.date().optional(),
+    /** Fraction of eligible records logged in full while the window is open. */
+    LOG_FULL_BODY_SAMPLE_RATIO: z.coerce.number().min(0).max(1).default(0.05),
+
+    /* --- Backups (7.5) --------------------------------------------------- */
+
+    BACKUP_BUCKET: z.string().min(1).optional(),
+    BACKUP_PREFIX: z.string().min(1).default('serviceloop/pg'),
+    /** Nightly dumps older than this are pruned by the backup script. */
+    BACKUP_RETENTION_DAYS: intish(30, 1, 3_650),
   })
   .superRefine((value, ctx) => {
     // Selecting the live WhatsApp adapter without its credentials is a boot
@@ -574,6 +845,34 @@ export const EnvSchema = z
       });
     }
 
+    // A DLT adapter with no entity id or header is a fallback rung that would
+    // be rejected by the operator on its first message - which is precisely the
+    // moment WhatsApp is already down, so the failure would be invisible until
+    // it mattered most.
+    if (value.SMS_DRIVER === 'dlt') {
+      for (const key of ['SMS_SENDER_ID', 'SMS_DLT_ENTITY_ID', 'SMS_PROVIDER_API_KEY'] as const) {
+        if (value[key] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: `${key} is required when SMS_DRIVER=dlt`,
+          });
+        }
+      }
+    }
+
+    // The active key must itself be in the ring under its own id, or a value
+    // written this minute would be unreadable by the very next process to boot.
+    const ring = value.PII_KEY_RING;
+    const ringed = ring[value.PII_KEY_ID];
+    if (ringed !== undefined && ringed !== value.PII_ENCRYPTION_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PII_KEY_RING'],
+        message: `PII_KEY_RING["${value.PII_KEY_ID}"] disagrees with PII_ENCRYPTION_KEY; the active key id must name the active key`,
+      });
+    }
+
     if (value.NODE_ENV !== 'production') return;
 
     if (value.DEMO_MODE) {
@@ -668,6 +967,57 @@ export const EnvSchema = z
         path: ['NOTIFIER_DRIVER'],
         message:
           'NOTIFIER_DRIVER must be "sms" in production: the sandbox notifiers print OTP codes',
+      });
+    }
+
+    /* --- phase 7 production floors ------------------------------------- */
+
+    if (value.DEPLOY_ENV !== 'prod') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DEPLOY_ENV'],
+        message:
+          'DEPLOY_ENV must be "prod" when NODE_ENV=production: the adapter allow-list and the alert routing key off it',
+      });
+    }
+    if (value.ADAPTER_ALLOWLIST.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ADAPTER_ALLOWLIST'],
+        message:
+          'ADAPTER_ALLOWLIST is required in production: every live adapter must be named explicitly, so a deploy cannot select one by accident',
+      });
+    }
+    if (value.SSRF_ALLOW_PRIVATE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SSRF_ALLOW_PRIVATE'],
+        message:
+          'SSRF_ALLOW_PRIVATE must be false in production: it is the dev-stack escape hatch for MinIO on localhost',
+      });
+    }
+    if (!value.RATE_LIMIT_ENABLED) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['RATE_LIMIT_ENABLED'],
+        message: 'RATE_LIMIT_ENABLED must be true in production',
+      });
+    }
+    if (value.LOG_FULL_BODIES_UNTIL !== undefined && value.LOG_LEVEL === 'trace') {
+      // Either alone is defensible. Together they are every message body in the
+      // log sink with no sampling in front of them.
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['LOG_FULL_BODIES_UNTIL'],
+        message:
+          'LOG_FULL_BODIES_UNTIL cannot be combined with LOG_LEVEL=trace in production: pick the sampled window or the verbose level, not both',
+      });
+    }
+    if (value.CORS_ALLOWED_ORIGINS.some((origin) => origin === '*')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CORS_ALLOWED_ORIGINS'],
+        message: 'CORS_ALLOWED_ORIGINS cannot contain "*": the API answers with credentials',
       });
     }
   });

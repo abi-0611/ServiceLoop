@@ -21,7 +21,9 @@
     "test:unit": "vitest run src",
     "test": "vitest run",
     "test:integration": "vitest run test",
-    "metrics:recompute": "tsx src/cli/recompute.ts"
+    "metrics:recompute": "tsx src/cli/recompute.ts",
+    "audit:verify": "tsx src/cli/verify-chain.ts",
+    "pii:rotate": "tsx src/cli/rotate-pii.ts"
   },
   "dependencies": {
     "@serviceloop/adapters": "workspace:*",

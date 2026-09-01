@@ -155,6 +155,12 @@ export interface MessageStore<Tx> {
       readonly providerConversationId: string | null;
       readonly conversationCategory: ConversationCategory | null;
       readonly sentAt: Date;
+      /**
+       * Set only when the message went out on a channel other than the one the
+       * row was written with — i.e. an SMS fallback. Left undefined otherwise so
+       * the common path does not rewrite a column with the value it already has.
+       */
+      readonly channel?: ChannelType;
     },
   ): Promise<void>;
 
@@ -275,6 +281,37 @@ export interface ChannelSendResult {
   readonly providerMessageId: string;
   readonly providerConversationId: string | null;
   readonly category: ConversationCategory | null;
+  /**
+   * Which channel actually carried it (phase 7.3).
+   *
+   * Absent from a single-transport sender, where it would be noise. A failover
+   * sender sets it, and the gate writes it onto the message row and into the
+   * `message.sent` event — because "we sent it" and "we sent it over SMS
+   * because WhatsApp was down" are different facts, and the second one is the
+   * one an operator needs during an incident and an owner needs when the SMS
+   * bill arrives.
+   */
+  readonly channel?: ChannelType;
+}
+
+/**
+ * What a message would look like on the fallback channel (phase 7.3).
+ *
+ * Present only on messages whose composer has thought about SMS. That is the
+ * design, not an omission: SMS in India carries only DLT-registered content, so
+ * a message with no registered template *cannot* fall back, and inventing a
+ * plain-text rendering for it would produce something the operator accepts and
+ * silently drops. A message without this simply fails over nothing, the send
+ * reports FAILED, and the escalation ladder raises the advisor task it raises
+ * for every other unsendable rung — a person rings the customer, which is worse
+ * than WhatsApp and much better than silence.
+ */
+export interface SmsFallbackContent {
+  /** Manifest key in `TEMPLATE_MANIFEST`; resolves to the shop's DLT id. */
+  readonly templateKey: string;
+  /** Plain text, already rendered, matching the registered template. */
+  readonly body: string;
+  readonly language: Language;
 }
 
 export interface ChannelSendRequest {
@@ -282,6 +319,7 @@ export interface ChannelSendRequest {
   /** E.164 for a person, `group:<id>` for the staff evidence channel. */
   readonly to: string;
   readonly content: OutboundContent;
+  readonly fallback?: SmsFallbackContent;
 }
 
 /**

@@ -12,6 +12,7 @@
     { "path": "../../packages/domain" },
     { "path": "../../packages/agent-core" },
     { "path": "../../packages/adapters" },
-    { "path": "../../packages/db" }
+    { "path": "../../packages/db" },
+    { "path": "../../packages/observability" }
   ]
 }

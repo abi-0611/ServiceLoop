@@ -13,6 +13,7 @@ export * from './intake';
 export * from './job-card/transitions';
 export * from './messaging';
 export * from './ports';
+export * from './privacy';
 export * from './retention';
 export * from './status';
 export * from './voice';

@@ -1,0 +1,16 @@
+apiVersion: 1
+
+providers:
+  - name: serviceloop
+    orgId: 1
+    folder: ServiceLoop
+    type: file
+    # Committed to the repository rather than edited in the UI. A dashboard that
+    # exists only in Grafana's own database disappears with the volume, and the
+    # one time anybody needs it is the one time somebody has just rebuilt the
+    # stack.
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -33,6 +33,12 @@ const ALLOWED_PREFIXES = [
   // and do not come through here; these three are the browser-side calls.
   'analytics',
   'retention',
+  // Phase 7: the DPDP request workflow (verify, approve, execute, cancel,
+  // reject) and the template ops screen's "record what Meta said". Both are
+  // browser-side writes from a signed-in member of staff; the read pages are
+  // server components and never come through here.
+  'privacy',
+  'ops',
 ] as const;
 
 /** Statuses the fetch spec forbids a body on. */

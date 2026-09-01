@@ -506,13 +506,17 @@ describe('schema smoke', () => {
     // `call_usage`) and the nine phase 6 adds (`retention_touches`,
     // `retention_holds`, `odometer_readings`, `feedback_requests`,
     // `service_due_forecasts`, `vehicle_documents`, `owner_digests`,
-    // `exception_alerts`, `metric_rollups`). Counting rather than listing is
-    // deliberate — it catches a table added without a migration being noticed,
-    // which is exactly what it did on phase 4.
+    // `exception_alerts`, `metric_rollups`), the four phase 7.2 adds
+    // (`data_requests`, `data_request_steps`, `conversation_costs`,
+    // `sms_costs`) and the one phase 7.3 add (`template_registrations`).
+    // Counting rather than listing is deliberate — it catches a table added
+    // without a migration being noticed, which is exactly what it did on phase
+    // 4, and again on phase 7 (the DPDP tables landed with this number left at
+    // 50).
     const tables = await db.execute<{ count: number }>(sql`
       select count(*)::int as count from information_schema.tables where table_schema = 'public'
     `);
-    expect(Number(tables.rows[0]?.count ?? 0)).toBe(50);
+    expect(Number(tables.rows[0]?.count ?? 0)).toBe(55);
   });
 
   it('enforces the per-shop unique registration index', async () => {

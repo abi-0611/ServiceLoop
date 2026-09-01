@@ -15,7 +15,7 @@ import {
   type SendOutcome,
 } from '@serviceloop/shared';
 import { z } from 'zod';
-import { CurrentStaff, type AuthenticatedStaff } from '../auth/auth.types';
+import { CurrentStaff, Roles, type AuthenticatedStaff } from '../auth/auth.types';
 import { currentTraceId } from '../common/request-context';
 import { ZodBody, ZodParam } from '../common/zod';
 import {
@@ -47,12 +47,23 @@ export class ConversationsController {
     @Inject(UNIT_OF_WORK) private readonly uow: PgUnitOfWork,
   ) {}
 
+  /**
+   * Phase 7.1 - RBAC tightening.
+   *
+   * These routes carried no `@Roles()` and were therefore open to every
+   * authenticated role, technicians included. That was never intended: a
+   * technician's job is the vehicle, and this controller reads customers' message history and writes replies in the shop's name.
+   * `rbac-matrix.test.ts` now asserts the whole surface, so the omission
+   * cannot come back silently.
+   */
   @Get()
+  @Roles('OWNER', 'ADVISOR')
   async list(@CurrentStaff() staff: AuthenticatedStaff): Promise<ConversationList> {
     return this.repository.list(staff.shopId);
   }
 
   @Get(':id')
+  @Roles('OWNER', 'ADVISOR')
   async thread(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodParam('id', UUID) id: string,
@@ -70,6 +81,7 @@ export class ConversationsController {
    * badge that clears itself on a page load is a badge nobody trusts.
    */
   @Post(':id/read')
+  @Roles('OWNER', 'ADVISOR')
   @HttpCode(204)
   async markRead(
     @CurrentStaff() staff: AuthenticatedStaff,
@@ -83,6 +95,7 @@ export class ConversationsController {
   }
 
   @Post(':id/reply')
+  @Roles('OWNER', 'ADVISOR')
   async reply(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodParam('id', UUID) id: string,
@@ -128,6 +141,7 @@ export class ConversationsController {
    * SERVICE consent ask, in one message (phase 2.9).
    */
   @Post(':id/consent-request')
+  @Roles('OWNER', 'ADVISOR')
   async requestConsent(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodParam('id', UUID) id: string,

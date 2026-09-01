@@ -23,7 +23,7 @@ import {
 } from '@serviceloop/shared';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { CurrentStaff, type AuthenticatedStaff } from '../auth/auth.types';
+import { CurrentStaff, Roles, type AuthenticatedStaff } from '../auth/auth.types';
 import { currentTraceId } from '../common/request-context';
 import { ZodBody, ZodParam, ZodQuery } from '../common/zod';
 import { DATABASE, RETENTION_RUNTIME } from '../infra/tokens';
@@ -90,7 +90,17 @@ export class RetentionController {
    * and computing them in the browser from a paged list would give a different
    * answer on page two.
    */
+  /**
+   * Phase 7.1 - RBAC tightening.
+   *
+   * These routes carried no `@Roles()` and were therefore open to every
+   * authenticated role, technicians included. That was never intended: a
+   * technician's job is the vehicle, and this controller reads the declined-work ledger, customers' feedback and their contact history.
+   * `rbac-matrix.test.ts` now asserts the whole surface, so the omission
+   * cannot come back silently.
+   */
   @Get('ledger')
+  @Roles('OWNER', 'ADVISOR')
   async ledger(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodQuery(LedgerQuery) query: z.infer<typeof LedgerQuery>,
@@ -139,6 +149,7 @@ export class RetentionController {
    * as the system not listening.
    */
   @Get('next-visit/:jobCardId')
+  @Roles('OWNER', 'ADVISOR')
   async nextVisit(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodParam('jobCardId', z.string().uuid()) jobCardId: string,
@@ -179,6 +190,7 @@ export class RetentionController {
    * retention engine, and it should not require a log search.
    */
   @Get('touches')
+  @Roles('OWNER', 'ADVISOR')
   async touches(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodQuery(ListQuery) query: z.infer<typeof ListQuery>,
@@ -203,6 +215,7 @@ export class RetentionController {
 
   /** Post-service feedback, newest first, with the day's tally (6.4). */
   @Get('feedback')
+  @Roles('OWNER', 'ADVISOR')
   async feedback(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodQuery(ListQuery) query: z.infer<typeof ListQuery>,
@@ -247,6 +260,7 @@ export class RetentionController {
 
   /** The realtime exception stream, as a list (6.8). */
   @Get('alerts')
+  @Roles('OWNER', 'ADVISOR')
   async alerts(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodQuery(AlertQuery) query: z.infer<typeof AlertQuery>,
@@ -284,6 +298,7 @@ export class RetentionController {
    * reason `recordDocument` and `enrol` are two calls rather than one.
    */
   @Post('documents')
+  @Roles('OWNER', 'ADVISOR')
   async recordDocument(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodBody(DocumentBody) body: z.infer<typeof DocumentBody>,
@@ -321,6 +336,7 @@ export class RetentionController {
    * re-pitch on its own.
    */
   @Post('odometer')
+  @Roles('OWNER', 'ADVISOR')
   async recordOdometer(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodBody(OdometerBody) body: z.infer<typeof OdometerBody>,

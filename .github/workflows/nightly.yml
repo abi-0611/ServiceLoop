@@ -1,0 +1,219 @@
+name: Nightly
+
+# The things that are too slow, too destructive or too stateful for a pull
+# request, and which the phase-7 acceptance gate nonetheless requires to be
+# green: the chaos drills, the k6 load suites, the restore-and-verify drill and
+# the full-journey scenario.
+#
+# Nightly rather than per-push is a deliberate trade. Each of these takes tens
+# of minutes and two of them kill containers; running them on every push would
+# make the pull-request signal so slow that people would stop reading it. The
+# cost is that a regression here is found within a day rather than within a
+# commit, which is the right trade for failures that are about *time* and
+# *load* — neither of which a single commit usually changes.
+#
+# `workflow_dispatch` is here so a drill can be run on demand, which is what
+# happens the morning after one fails.
+
+on:
+  schedule:
+    # 02:30 UTC = 08:00 IST. After the nightly backup at 02:00 IST, so the
+    # restore drill has last night's dump to work from rather than the one
+    # before it.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  DEMO_MODE: 'true'
+  NODE_ENV: test
+  CI: 'true'
+
+jobs:
+  full-journey:
+    name: full-journey E2E (7.9)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Start the dev stack
+        run: |
+          docker compose --project-directory . -f infra/compose.yaml up -d --wait postgres redis minio
+          docker compose --project-directory . -f infra/compose.yaml run --rm minio-bootstrap
+
+      - name: Migrate and seed
+        run: |
+          pnpm db:migrate
+          pnpm db:seed
+
+      - name: The whole product, one vehicle, one fake clock
+        # Photo intake through to the recovered rupee in the digest. The
+        # capstone: it is the only test that asserts the phases compose, and
+        # every individual phase demo can be green while this is not.
+        run: pnpm demo:journey
+
+      - name: Audit chain verifies after the whole journey
+        run: pnpm audit:verify
+
+  chaos:
+    name: chaos drills (7.5)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Start the dev stack
+        run: |
+          docker compose --project-directory . -f infra/compose.yaml up -d --wait postgres redis minio
+          docker compose --project-directory . -f infra/compose.yaml run --rm minio-bootstrap
+          pnpm db:migrate
+          pnpm db:seed
+
+      # Each scenario is a separate step so a failure names itself in the job
+      # summary. `all` would report "chaos failed" and leave somebody reading
+      # 400 lines of log to find out which one.
+      - name: Kill Redis mid-ladder
+        run: pnpm chaos redis-kill
+
+      - name: Kill a worker mid-outbox-batch
+        run: pnpm chaos worker-kill
+
+      - name: LLM provider down for five minutes
+        run: pnpm chaos llm-blackout
+
+      - name: Container logs
+        if: failure()
+        run: docker compose --project-directory . -f infra/compose.yaml logs --tail 400
+
+  load:
+    name: k6 load suites (7.6)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Install k6
+        run: |
+          curl -fsSL https://github.com/grafana/k6/releases/download/v0.55.0/k6-v0.55.0-linux-amd64.tar.gz \
+            | tar -xz --strip-components 1 -C /usr/local/bin k6-v0.55.0-linux-amd64/k6
+
+      - name: Start the dev stack
+        run: |
+          docker compose --project-directory . -f infra/compose.yaml up -d --wait postgres redis minio
+          docker compose --project-directory . -f infra/compose.yaml run --rm minio-bootstrap
+          pnpm db:migrate
+          pnpm db:seed
+
+      - name: Start the API and workers
+        run: |
+          pnpm --filter @serviceloop/api run start &
+          pnpm --filter @serviceloop/workers run start &
+          # Poll rather than sleep: a fixed sleep is either too short on a slow
+          # runner (and the first suite measures start-up) or wasted time.
+          for _ in $(seq 1 60); do
+            curl -fsS http://localhost:3001/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://localhost:3001/health
+
+      - name: Webhook burst — 200/s for 60s, p95 < 500ms, zero drops
+        run: k6 run --summary-export docs/perf/$(date -u +%Y-%m-%d)-webhook.json perf/webhook-burst.js
+
+      - name: 500 concurrent conversations — ladder drift < 5s
+        run: k6 run --summary-export docs/perf/$(date -u +%Y-%m-%d)-conversations.json perf/concurrent-conversations.js
+
+      - name: Console board with 5k cards — p95 < 800ms
+        run: k6 run --summary-export docs/perf/$(date -u +%Y-%m-%d)-board.json perf/console-board.js
+
+      # Archived rather than committed. `docs/perf/README.md` says a row nobody
+      # can trace back to a build artifact should be deleted rather than
+      # trusted, so the artifact is the record and the table is the index.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-summaries
+          path: docs/perf/*.json
+          retention-days: 90
+
+  restore:
+    name: restore-and-verify drill (7.5)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # Needs a real bucket and a real dump, so it only runs where those are
+    # configured. A skipped job is honest; a job that fakes a backup and
+    # verifies the fake is worse than no job at all.
+    if: vars.BACKUP_BUCKET != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_BACKUP_READER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Start a scratch Postgres
+        run: docker compose --project-directory . -f infra/compose.yaml up -d --wait postgres
+
+      - name: Restore last night's dump and verify it
+        # Restores, then runs the product's own checks against the restored
+        # database: the migration ledger, that there is data at all, the audit
+        # chain, and a metrics recompute that must reproduce the stored rollups
+        # exactly. A restore that completes is not a restore that worked.
+        env:
+          BACKUP_BUCKET: ${{ vars.BACKUP_BUCKET }}
+          ADMIN_DATABASE_URL: postgres://serviceloop:serviceloop@localhost:5432/postgres
+        run: pnpm restore:verify

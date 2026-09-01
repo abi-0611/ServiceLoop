@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  DataRequestKindSchema,
   AdvisorTaskKindSchema,
   AgentObjectiveSchema,
   AgentRunOutcomeSchema,
@@ -109,6 +110,10 @@ export const EVENT_TYPES = [
   'owner_digest.sent',
   'alert.raised',
   'metrics.rollup_computed',
+  /* Phase 7 — DPDP data-principal workflows. */
+  'privacy.request_raised',
+  'privacy.export_ready',
+  'privacy.deletion_completed',
 ] as const;
 
 export const EventTypeSchema = z.enum(EVENT_TYPES);
@@ -841,6 +846,53 @@ export const MetricsRollupComputedPayloadSchema = z.object({
   actor: ActorSchema,
 });
 
+/**
+ * A data principal exercised a right (phase 7.2).
+ *
+ * The payloads deliberately carry `subjectPseudonym` and *not* a customer name
+ * or number. These envelopes outlive the customer they are about — a
+ * `privacy.deletion_completed` event whose payload named the person would be an
+ * identifier surviving its own erasure, which is the exact failure this whole
+ * workflow exists to prevent.
+ *
+ * `customerId` is nullable and is null on the completion event, for the same
+ * reason: by the time it is emitted, that id no longer resolves to a person.
+ */
+export const PrivacyRequestRaisedPayloadSchema = z.object({
+  requestId: z.string().uuid(),
+  subjectPseudonym: z.string().min(1),
+  customerId: z.string().uuid().nullable(),
+  kind: DataRequestKindSchema,
+});
+
+export const PrivacyExportReadyPayloadSchema = z.object({
+  requestId: z.string().uuid(),
+  subjectPseudonym: z.string().min(1),
+  customerId: z.string().uuid().nullable(),
+  /**
+   * The one-shot download credential.
+   *
+   * On the envelope rather than on the row, because the row stores only its
+   * hash — the same rule as a refresh token. It reaches the composer that puts
+   * the link in a message and goes no further; `PII_REDACT_PATHS` covers it in
+   * every log sink.
+   */
+  downloadToken: z.string().min(1),
+  expiresAt: z.string().datetime({ offset: true }),
+});
+
+export const PrivacyDeletionCompletedPayloadSchema = z.object({
+  requestId: z.string().uuid(),
+  subjectPseudonym: z.string().min(1),
+  customerId: z.string().uuid().nullable(),
+  totals: z.object({
+    purgedRows: z.number().int().min(0),
+    pseudonymisedRows: z.number().int().min(0),
+    retainedRows: z.number().int().min(0),
+    tablesTouched: z.number().int().min(0),
+  }),
+});
+
 export const EventEnvelopeSchema = z.discriminatedUnion('type', [
   z.object({
     ...envelopeBase,
@@ -1097,6 +1149,21 @@ export const EventEnvelopeSchema = z.discriminatedUnion('type', [
     type: z.literal('metrics.rollup_computed'),
     payload: MetricsRollupComputedPayloadSchema,
   }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('privacy.request_raised'),
+    payload: PrivacyRequestRaisedPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('privacy.export_ready'),
+    payload: PrivacyExportReadyPayloadSchema,
+  }),
+  z.object({
+    ...envelopeBase,
+    type: z.literal('privacy.deletion_completed'),
+    payload: PrivacyDeletionCompletedPayloadSchema,
+  }),
 ]);
 
 export type EventEnvelope = z.infer<typeof EventEnvelopeSchema>;
@@ -1213,6 +1280,13 @@ export const QUEUE_BY_EVENT_TYPE: Readonly<Record<EventType, QueueName>> = {
   'owner_digest.sent': 'retention-events',
   'alert.raised': 'retention-events',
   'metrics.rollup_computed': 'retention-events',
+  // `message-events`, not a queue of their own. The only consumer is the
+  // composer that tells the customer their archive is ready, which is an
+  // outbound message like any other — and a queue with one handler on it is a
+  // queue somebody forgets to run a worker for.
+  'privacy.request_raised': 'message-events',
+  'privacy.export_ready': 'message-events',
+  'privacy.deletion_completed': 'message-events',
 };
 
 export function queueForEventType(type: EventType): QueueName {

@@ -68,7 +68,17 @@ export class AnalyticsController {
    * rather than letting the page fetch twice is what stops two views of the
    * same page disagreeing about what "last period" meant.
    */
+  /**
+   * Phase 7.1 - RBAC tightening.
+   *
+   * These routes carried no `@Roles()` and were therefore open to every
+   * authenticated role, technicians included. That was never intended: a
+   * technician's job is the vehicle, and this controller reads the shop's revenue, margin and approval-rate figures.
+   * `rbac-matrix.test.ts` now asserts the whole surface, so the omission
+   * cannot come back silently.
+   */
   @Get('summary')
+  @Roles('OWNER', 'ADVISOR')
   async summary(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodQuery(RangeQuery) query: z.infer<typeof RangeQuery>,
@@ -104,6 +114,7 @@ export class AnalyticsController {
    * still opens — new fields are appended, never inserted.
    */
   @Get('export.csv')
+  @Roles('OWNER', 'ADVISOR')
   @Header('Content-Type', 'text/csv; charset=utf-8')
   @Header('Content-Disposition', 'attachment; filename="serviceloop-analytics.csv"')
   async exportCsv(
@@ -185,6 +196,7 @@ export class AnalyticsController {
    * page with the message on their phone must not find two different evenings.
    */
   @Get('digests')
+  @Roles('OWNER', 'ADVISOR')
   async digests(
     @CurrentStaff() staff: AuthenticatedStaff,
     @ZodQuery(DigestQuery) query: z.infer<typeof DigestQuery>,

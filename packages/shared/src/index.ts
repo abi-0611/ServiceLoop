@@ -13,5 +13,6 @@ export * from './objects';
 export * from './phone';
 export * from './registration';
 export * from './result';
+export * from './ssrf';
 export * from './time';
 export * from './working-hours';

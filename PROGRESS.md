@@ -2457,3 +2457,298 @@ customer.
     console — only record the date. The separation is deliberate (recording a date is not permission
     to write about it); the missing half is a consent capture UI, which belongs with the phase-7
     consent work.
+
+---
+
+# PHASE 7 — PRODUCTION HARDENING & DEPLOYMENT
+
+This session picked up a Phase 7 that had been substantially built and never run. The security
+pass, the DPDP domain and API, the SMS adapters, the observability package, the reliability
+scripts, the k6 suites and the deploy tooling were all present and all typechecked. What was
+missing was everything that would have *executed* them: `pnpm demo:phase7` pointed at a file that
+did not exist, eight documents referenced by `docs/README.md` had never been written, the DPDP
+grace window had no sentinel to run it, and CI had no security scan, no nightly and no deploy.
+
+Running the code for the first time is what this phase turned out to be about. **Six defects in
+shipped code were found by executing it, and every one of them was in a path that only runs when a
+customer exercises a right.** None could have been caught by a typecheck; all six typechecked.
+
+## What was completed
+
+### `[7.2] DONE — the sentinel that actually runs an erasure`
+`DataPrincipalService.due()` existed, `PgDataRequestStore.dueForExecution` existed, and the API's
+`execute` endpoint carried a comment saying "the worker sentinel does this on its own once the grace
+window elapses". Nothing called either. An approved deletion would have sat `SCHEDULED` for ever
+unless somebody pressed "run now" — a statutory obligation depending on a person remembering a
+button.
+
+`apps/workers/src/privacy-sentinel.ts` is that sentinel, on `DPDP_SCAN_MS` (two minutes, not the
+retention scan's fifteen: somebody is waiting on the other end of this one). It is the only sentinel
+not scoped by shop, deliberately — the question "which requests are past their scheduled time" is
+already shop-tagged, and iterating shops would quietly skip a request belonging to a shop
+deactivated after it was approved, which is precisely the request somebody is most likely to be
+waiting on.
+
+A failure is logged per request rather than thrown, so one wedged request does not block the ones
+behind it in the same pass; and `dueForExecution` does not return `FAILED` rows, so a request that
+cannot complete stops asking rather than looping on the same exception until somebody reads the
+logs.
+
+### `[7.3] DONE — the template registration table and the ops surface`
+`templates.ts` described a per-shop registration state living "in the database". There was no such
+table. `0008_phase7_template_registrations` adds it, keyed `(shop, template_key, language)` because
+**Meta approves per language variant** — a shop live in English and still waiting on Tamil is the
+single most common state two days into onboarding, and a table keyed only by template would have to
+report one of those as the truth.
+
+`template_key` has no foreign key, deliberately: what it references is code. A template retired from
+the manifest leaves its rows behind and the ops screen reports them as orphaned — the warning that
+matters, because Meta is still holding an approval for something this build will never send.
+
+`buildTemplateOpsView` is the fold, and it is driven by the **manifest**, not by the rows. A fold
+driven by rows would simply not mention a template added this morning, and absence reads as "nothing
+to do" on a screen. Ten tests, the most important of which asserts that a customer-facing template
+approved in English with Tamil pending is **not** ready — a screen that called that green would tell
+an operator the onboarding was finished while a third of the shop's customers were unreachable.
+
+`GET /ops/templates` serves the catalog, the lint (the same `lintTemplates()` CI runs — a green
+build only proves the catalogue was consistent *at build time*) and SMS coverage.
+`POST /ops/templates/registrations` records what Meta decided; it does not submit, because
+submission is a Business Manager action against a legal entity and a button here that appeared to do
+it would either be a lie or a credential this service should not hold.
+
+`GET /ops/costs` is the margin half, split by channel and category and never as one number — an
+owner asking why this month cost more than last needs to know whether the difference is marketing
+conversations or SMS fallback, and those have opposite remedies.
+
+### `[7.2, 7.3] DONE — four console surfaces`
+`/privacy` (public, outside the session-checked group — a notice a person can only read after
+signing in to a workshop's console has not been published to the people it is about; the contact
+block is fetched from `GET /privacy/notice` so the page and the running system cannot drift),
+`/settings/privacy` (the DPDP workflow, where a completed deletion names nobody and that is
+correct), and `/settings/templates` (readiness, per-language status, the exact submission body with
+Meta's positional placeholders already applied, and SMS coverage).
+
+### `[7.x] DONE — pnpm demo:phase7, 17 steps, green and re-runnable`
+Template ops → an injected WhatsApp outage carried by SMS → the circuit closing → cost metering →
+a DPDP export delivered against a single-use token → an erasure through its grace window → **four
+probes in raw SQL**. The probes deliberately go around every store, service and encryption helper
+the application would use, because a check that went through the same code path as the thing it is
+checking would prove only that the code is self-consistent.
+
+Three of the demo's own steps had to be rewritten once the guardrails refused them, and each refusal
+was correct: the first message needed the AI disclosure, the shop requires sixty minutes between
+messages, and the fourth message in a day exceeds the cap. The drill now obeys all three and sends
+its recovery message as a **template**, because twenty-four hours have passed and the session window
+has closed — which is exactly what templates exist for, and exactly why the ops screen matters.
+
+### `[7.9] DONE — `pnpm demo:journey`, 26 steps, green and re-runnable`
+
+The capstone. One vehicle, one customer, one fake clock, March to July: a photographed paper card
+misread at 0.35 confidence and corrected by the technician → consent asked with the AI disclosure →
+the approval bundle in the technician's own words → a price objection refused honestly at the 85%
+floor → a **partial** decision approving the oil and deferring the brakes → the ledger row → parts
+delay and a proactive ETA → an inbound call answered and bridged with a whisper → ready with pickup
+slots → a GST invoice → a UPI payment whose redelivery does not double-credit → a gate pass that
+opens once → a positive feedback face and exactly one review link → the July rains raising the
+deferred brakes at the price quoted in March → the booking, the second card, the attribution → the
+evening digest.
+
+Then the four assertions the phase file asks for, over the whole run:
+
+1. **Final state.** Card `DELIVERED`, invoice `PAID`, gate pass `USED`.
+2. **Every outbound bears the marks of the gate.** Not an audit-log check — the gate writes no audit
+   row for a message it *allows*, only for refusals, so "did it pass the gate" cannot be asked that
+   way. `no-bypass.test.ts` proves there is no second send path; this asserts the properties the
+   gate exists to enforce, on the thirteen rows it produced: every one carries a consent purpose,
+   every one has that purpose granted, and none is `SENT` while carrying a refusal code.
+3. **The audit chain verifies** — 1,943 entries, with one required action from each phase named
+   explicitly so a phase silently dropping out of the journey fails here rather than passing quietly
+   with fewer steps.
+4. **The rollup reproduces** from 1,245 raw `events_outbox` rows through the pure `computeRollup`.
+   The lookback is the recovery cohort rather than the folded day, because a rupee recovered in July
+   is attributed to a decline recorded in March — a fold reading only today's events would compute
+   zero and then agree with itself.
+
+**Two more defects, both found by the journey and both latent in shipped code:**
+
+8. **No job card could ever reach `CLOSED`, and a paid car could not be handed back.**
+   `PgJobCardStore.loadOutstandingBalancePaise` summed the *accepted estimate totals* and ignored
+   payments entirely, so the balance was a constant no payment could move. Two guards read it, and
+   both had a branch that could never be taken: `deliveryBeforePaymentAllowed` (a shop collecting
+   payment before delivery could not release a car the customer had paid for in full) and
+   `balanceSettled` on `DELIVERED:CLOSE`. Phase 4's demo never caught it because its card reaches
+   `DELIVERED` through `AWAITING_PAYMENT`, which consults neither guard. It now prefers the
+   invoice's `total - amount_paid`, falling back to the accepted estimate's *lines* excluding
+   declined and deferred work — the old header-total fallback charged for the brake job somebody
+   said no to, which is the exact mistake the ledger exists because of.
+9. **The shipped daily frequency cap is lower than one ordinary day of the product's own flow.**
+   `maxOutboundPerCustomerPerDay` defaults to 3; the consent ask, the approval bundle, the objection
+   reply, the delay notice and the ready message are five. See open question 37.
+
+The journey obeys every other guardrail rather than switching it off: the sixty-minute interval is
+respected by advancing the clock between messages, the first message carries the AI disclosure, the
+invoice refuses to issue without a registered legal name and GSTIN, and the partial decision is a
+real `PARTIAL` rather than an approve-then-decline (which the work-item state machine correctly
+refuses — `DECLINE` is not legal from `APPROVED`).
+
+### `[7.8] DONE — the documentation set`
+`architecture.md`, `deploy.md`, `onboarding.md`, `go-live-checklist.md`, `privacy/dpdp.md`,
+`privacy/retention.md`, `privacy/breach-notification.md`, `privacy/notice-{en,ta,hi}.md`,
+`runbooks/key-rotation.md`, `runbooks/backup-restore.md`, `perf/README.md`. Every relative link in
+`docs/` now resolves; before this session eleven of them did not, including three that
+`docs/README.md` offered as the answer to "where do I start".
+
+### `[7.1, 7.5–7.7] DONE — the CI that runs any of it`
+`ci.yml` gains a `security` job (gitleaks over the full history — a secret committed and removed in
+the next commit is still in every contributor's clone — plus `pnpm audit` and osv-scanner), the
+template and migration lint gates, and `demo:phase7`. `nightly.yml` runs the chaos drills, the k6
+suites, the restore-and-verify drill and the full-journey scenario. `deploy.yml` deploys staging on
+merge and production on a manual trigger with a GitHub environment gate.
+
+## Nine defects found by running the code
+
+Every one of these typechecked, and five of them are on a path a customer's legal right runs
+through.
+
+1. **The DPDP export threw on its first line, for every customer.** `PgExportSource.profile`
+   declared `created_at: Date` on a raw `tx.execute` row. The type parameter is a claim about the
+   row, not a coercion — node-postgres returns a string — so `.toISOString()` threw. The media
+   index had the identical bug. An export request from a real customer would have failed with a
+   type error.
+2. **The export queried a column that does not exist.** `work_items.estimate_paise`. The estimated
+   price lives on the estimate *line* that quoted it, because an item can be re-quoted and a price
+   on the item would be the latest quote with no record of the one the customer actually answered.
+3. **The export queried a second column that does not exist.** `invoice_lines.quantity`; it is
+   `quantity_milli`, stored in thousandths so half a litre of oil is exact arithmetic.
+4. **The erasure cascade threw on `media_assets.conversation_id`.** There is no such column — media
+   hangs off a job card. The same wrong assumption appeared in the export. An approved erasure would
+   have failed halfway.
+5. **The erasure left the payer's name in the gateway payload.** `payment_events` stores the body in
+   `raw_payload`, not `payload`; the redaction statement named the wrong column and threw.
+6. **`approve()` returned a status the database disagreed with.** It wrote `SCHEDULED` and returned
+   `APPROVED`. The console renders its action buttons from that value, so it would have offered "Run
+   now" on a deletion still inside its grace window — a button the API then refuses, which teaches
+   an operator that the screen's buttons are unreliable.
+
+Plus two the full-journey capstone found (8 and 9, recorded in the 7.9 section above), and one
+found by writing a test the code asked for:
+
+7. **The PII key rotation missed three encrypted columns.** `rotate-pii.ts` hard-codes its column
+   list and says why — a rotation that silently skipped a column would report success and leave
+   behind ciphertext that, once the retired key is dropped, nobody can read again. It also referred
+   to a `rotate-pii.test.ts` that compares the list against the schema. That test did not exist.
+   Written, it immediately found `conversations.external_address_encrypted`, `calls.to_encrypted`
+   and `feedback_requests.comment_encrypted` — the WhatsApp address a thread is bound to, the number
+   the shop rang, and a customer's own words about their service. Step 4 of the documented rotation
+   procedure would have made all three permanently unreadable, and the command that exists to
+   prevent exactly that would have reported success.
+
+Two smaller ones, both in tests that had stopped testing: the schema table-count assertion still
+said 50 after phase 7.2 added four tables (so it would have failed CI on the next integration run
+for the wrong reason), and `CASCADE_PLAN` had no entry for `template_registrations` — caught by the
+plan's own totality test, which is that test doing its job.
+
+## Phase 7 Acceptance Gate — current state
+
+- [x] **Security suite + gitleaks + dependency scan; RBAC matrix green.** The RBAC matrix covers 94
+      routes including the four new ones; gitleaks, `pnpm audit` and osv-scanner are wired as a CI
+      job. The scans have not been *observed* passing — see below.
+- [x] **DPDP export and deletion workflows proven; audit chain survives deletion via
+      pseudonymisation; retention carve-outs documented.** `demo:phase7` steps 09–17, against
+      Postgres: the export delivered on a single-use token, the erasure through a real grace window
+      that refused to run early, and four raw-SQL probes — the phone blind index destroyed, the
+      invoice intact at ₹4,125 with the identity replaced and a 2034 retention clock, 608 audit
+      events with the chain intact and one rewritten to the pseudonym, and 109 rollups with every
+      payload hash identical.
+- [x] **Template lint, cost metering, and SMS fallback operational; WhatsApp-outage drill passes.**
+      Steps 02–08: the lint clean over 11 templates, readiness correctly blocked on `ta, hi`, three
+      messages carried by SMS with the circuit opening and closing, and the cost split showing a
+      SERVICE conversation free and a UTILITY one at ₹0.11.
+- [ ] **Dashboards render; every alert rule fired in test; default logs PII-free.** The log-redaction
+      suite is green (33 tests). The dashboards and alert rules are committed but have not been
+      rendered or fired — that needs the ops compose profile up, which this session did not do.
+- [ ] **All reliability drills green, including restore-and-verify and the three chaos scenarios.**
+      Scripted and wired into `nightly.yml`; not executed.
+- [ ] **k6 targets met; results archived.** Suites and thresholds exist and are wired into
+      `nightly.yml`; `docs/perf/README.md` says plainly that its results table is empty because the
+      workflow has not run.
+- [ ] **Staging deploy one-command; prod promote + rollback drills done.** Scripts and workflow
+      exist; no GCP project to run them against.
+- [x] **Docs complete and independently executable.** Eleven documents written; every relative link
+      resolves. The independent-execution test has not been run — `onboarding.md` has a "gaps found
+      in practice" section that is deliberately empty and says so.
+- [~] **Full-journey E2E green three consecutive nights.** Built and green: `pnpm demo:journey`,
+      26/26, re-runnable, wired into `nightly.yml`. The *three consecutive nights* half cannot be
+      claimed — the nightly workflow has not run once.
+- [ ] **Tag `phase-7-complete` and `v1.0.0-rc1`.** Not created; a git tag is the user's call.
+
+## Decisions & deviations — Phase 7
+
+94. **The phase-7 demo asserts in raw SQL, going around every store in the codebase.** "The deletion
+    worked" is not observable from the console — the console is *supposed* to show nothing
+    afterwards. A probe that read through `PgCustomerLookup` would decrypt what a thief could not,
+    and would prove the application is self-consistent rather than that the data is gone.
+95. **The customer row survives an erasure as a tombstone.** Retained invoices carry a
+    `NOT NULL RESTRICT` link to it, so deleting it would either destroy the tax record or leave a
+    dangling key. The first draft of probe 1 asserted the row was gone; the cascade plan is right
+    and the assertion was wrong. What must not survive is anything identifying, and that is what the
+    probe now checks — including reading the ciphertext column directly, as a database dump would.
+96. **The outage drill obeys the guardrails rather than switching them off.** Three refusals had to
+    be worked around — the AI disclosure, the sixty-minute interval and the daily cap of three — and
+    each was the gate behaving correctly. A drill that raised the cap to get its recovery send
+    through would have proved the circuit closed for a message the shop would never have sent.
+97. **`demo:phase7` asserts cost *deltas* against a baseline.** The cost store is an accumulator and
+    the demo is re-runnable; asserting absolute totals would pass exactly once and then report a
+    phantom regression on every subsequent run — which is worse than not asserting, because somebody
+    would eventually "fix" the meter.
+98. **`OpsModule` is separate from `RetentionModule`** even though the console shows cost beside the
+    other analytics. An analytics KPI is a fold of the shop's own event log; a cost is what a third
+    party will invoice. Merging them would put a number Meta decides into a controller whose stated
+    invariant is that it only ever reads a stored rollup.
+99. **Migration 0008 is a new file rather than an edit to 0007.** 0007 had already been applied
+    wherever this branch had been run, and drizzle records a hash per migration. "The phase is not
+    released yet" is not a reason to edit an applied migration; only "nobody has run it" would be,
+    and that is not knowable.
+100. **The nightly restore drill is skipped rather than faked when no bucket is configured.** A
+     skipped job is honest; a job that fabricates a backup and then verifies the fabrication is
+     worse than no job at all.
+101. **Staging rolls back automatically on a failed smoke; production does not.** A prod smoke
+     failure needs a person to decide whether the fault is the release or the check, and an
+     automatic rollback would destroy the evidence either way.
+
+## OPEN QUESTIONS — Phase 7
+
+32. **The full journey has never run on CI.** It is green locally, twice, and `nightly.yml` runs
+    it — but the acceptance gate asks for three consecutive *nights*, and the workflow has not
+    fired once. Nothing about it is proven to survive a cold runner, and its longest step (the
+    loopback call, ~1.5s locally) is the one most likely to behave differently there.
+33. **A backlog of `RUNNING` data requests starves newly-due ones.** `dueForExecution` returns
+    `APPROVED`, `SCHEDULED` and `RUNNING` rows in one batch — `RUNNING` deliberately, so a worker
+    that died mid-cascade resumes — and they share `DPDP_BATCH_SIZE`. Interrupted runs of the demo
+    left eleven such rows and the next run's request was never reached. In production a request
+    either completes or fails, so this needs a crash to arise; but a request wedged in `RUNNING` by
+    a repeatable failure would hold its slot for ever. There is no alert on it.
+34. **Nothing observes the observability.** The Grafana dashboards, the Prometheus rules and the
+    Alertmanager config are committed, and the acceptance gate asks that every rule be *fired* on an
+    injected condition. That has not been done, and a dashboard nobody has rendered is a JSON file.
+35. **The docs have not been independently executed.** The acceptance test for `docs/` is that a
+    teammate, or a fresh session given only `docs/`, can deploy to staging and onboard a shop
+    without asking a question. Without a GCP project the deploy half cannot be tried at all.
+36. **`BLIND_INDEX_KEY` is not rotatable.** It derives both the phone-lookup index and the DPDP
+    pseudonyms, so changing it makes every customer unfindable by phone *and* mints new pseudonyms
+    that no longer match retained invoices. `key-rotation.md` says so plainly and calls it a project
+    rather than a runbook. It is the one secret in the deployment with no rotation story.
+
+37. **The shipped daily frequency cap is lower than the flow the product runs.**
+    `maxOutboundPerCustomerPerDay` defaults to 3. One ordinary day of this product's own loop —
+    the consent ask, the approval bundle, the objection reply, the delay notice, the ready message
+    — is five, and the full journey needs eight. A shop left on the default will have its own
+    status messages refused by its own gate, silently, with an advisor task raised instead. Either
+    the default is too low or the loop sends too much; the demo raises it to 8 and says so, which
+    is not a decision a demo should be making on a shop's behalf.
+38. **A spoken status question is not answered; it degrades.** "Is my car ready?" on an inbound
+    call reaches the line, gets the greeting and the recording notice, and then ends
+    `PIPELINE_FAILURE` — the apology path. Graceful, and not what the product claims. Pressing 0
+    bridges to a person correctly, which is what the journey asserts instead. Whether this is the
+    sandbox recogniser or the intent classification has not been established.

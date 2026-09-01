@@ -62,6 +62,66 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The three phase-7 gates that need the build to have happened. Each
+      # reads what will ship rather than the source: a lint against the source
+      # can pass while the artefact it produced is wrong.
+      - name: Template lint
+        # Catches, before merge, the three failures that otherwise surface in
+        # front of a customer: a Tamil variant taking different variables from
+        # its English original, a customer-facing template that exists only in
+        # English, and a name Meta would reject on submission.
+        run: pnpm lint:templates
+
+      - name: Migration policy (expand-migrate-contract)
+        # A destructive migration with no CONTRACT waiver fails here. Cloud Run
+        # serves two revisions at once during a deploy, so a dropped column is
+        # an outage — and a rollback after one has nothing to roll back to.
+        run: pnpm lint:migrations
+
+  security:
+    name: secrets · dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # `fetch-depth: 0` so gitleaks scans the *history*, not just the tip. A
+      # secret committed and then removed in the next commit is still a leaked
+      # secret — it is in the clone every contributor already has — and a
+      # shallow scan would report the repository clean.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Dependency audit (pnpm)
+        # High and above only. `--audit-level moderate` on a monorepo of this
+        # size fails every week on a transitive dev dependency, and a gate that
+        # fails every week is a gate people learn to re-run until it passes.
+        run: pnpm audit --audit-level high --prod
+
+      - name: Dependency scan (osv-scanner)
+        # A second opinion from a different vulnerability database. The overlap
+        # with `pnpm audit` is large and the gaps do not coincide, which is the
+        # whole reason for running both.
+        uses: google/osv-scanner-action/osv-scanner-action@v1.9.1
+        with:
+          scan-args: |-
+            --lockfile=./pnpm-lock.yaml
+
   integration:
     name: integration · demos · e2e
     runs-on: ubuntu-24.04
@@ -129,6 +189,14 @@ jobs:
 
       - name: Phase 6 demo
         run: pnpm demo:phase6
+
+      - name: Phase 7 demo
+        # The DPDP export and erasure, the WhatsApp-outage drill and the cost
+        # split — with the four probes made in raw SQL. The erasure assertions
+        # are the reason this runs here rather than nightly: a change that
+        # quietly stopped destroying a customer's data would otherwise reach
+        # main and sit there until somebody ran the drill by hand.
+        run: pnpm demo:phase7
 
       - name: Metrics recompute reproduces every rollup
         # The audit story for "₹ recovered", enforced rather than described.

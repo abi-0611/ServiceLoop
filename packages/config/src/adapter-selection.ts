@@ -12,6 +12,8 @@ export const PORTS = [
   'llm',
   'ocr',
   'whatsapp',
+  'sms',
+  'antivirus',
   'telephony',
   'speech',
   'speech-stream',
@@ -284,7 +286,135 @@ export function selectAdapters(env: Env): readonly AdapterSelection[] {
             implemented: true,
           };
 
-  return [storage, notifier, llm, ocr, whatsapp, speech, speechStream, telephony, payments];
+  /**
+   * The SMS rung (phase 7.3).
+   *
+   * It gets a line of its own even though most shops will never see it fire,
+   * because the question it answers - "what happened when WhatsApp was down?" -
+   * is asked exactly once, in an incident, by somebody who needs the answer in
+   * the first thirty seconds. `DEMO_MODE` forces the sandbox for the reason it
+   * forces every other transport: a developer with a provider key in their
+   * shell must not be able to bill a real message to a real handset.
+   */
+  const sms: AdapterSelection =
+    demo || env.SMS_DRIVER === 'sandbox'
+      ? {
+          port: 'sms',
+          adapter: 'SandboxSmsAdapter',
+          sandbox: true,
+          reason: demo
+            ? 'DEMO_MODE forces the sandbox SMS adapter'
+            : `SMS_DRIVER=${env.SMS_DRIVER}`,
+          implemented: true,
+        }
+      : {
+          port: 'sms',
+          adapter: `DltSmsAdapter(${env.SMS_SENDER_ID ?? 'no-header'})`,
+          sandbox: false,
+          reason: `SMS_DRIVER=dlt with entity ${env.SMS_DLT_ENTITY_ID ?? 'unset'} registered`,
+          implemented: true,
+        };
+
+  /**
+   * Upload scanning (phase 7.1). `none` is a real adapter that accepts
+   * everything and says so in the boot log, which is materially different from
+   * a port that is not wired at all: an operator reading this line learns that
+   * nothing is scanning, rather than learning nothing.
+   */
+  const antivirus: AdapterSelection =
+    env.ANTIVIRUS_DRIVER === 'clamav'
+      ? {
+          port: 'antivirus',
+          adapter: `ClamAvScanner(${env.CLAMAV_HOST}:${env.CLAMAV_PORT})`,
+          sandbox: false,
+          reason: `ANTIVIRUS_DRIVER=clamav, ${env.ANTIVIRUS_FAIL_CLOSED ? 'fail-closed' : 'fail-open'} when the daemon is unreachable`,
+          implemented: true,
+        }
+      : {
+          port: 'antivirus',
+          adapter: 'PermissiveScanner',
+          sandbox: true,
+          reason: 'ANTIVIRUS_DRIVER=none — uploads are accepted without being scanned',
+          implemented: true,
+        };
+
+  return [
+    storage,
+    notifier,
+    llm,
+    ocr,
+    whatsapp,
+    sms,
+    antivirus,
+    speech,
+    speechStream,
+    telephony,
+    payments,
+  ];
+}
+
+/**
+ * The production adapter allow-list (phase 7.7).
+ *
+ * `NODE_ENV=production` already refuses the sandbox for the ports where a
+ * sandbox would be catastrophic. This is the other direction: production says
+ * out loud which adapter each port *is*, and a boot that disagrees stops.
+ *
+ * The two checks catch different mistakes. The refusals in `env.ts` catch "we
+ * forgot to configure the real thing"; this catches "a deploy script selected
+ * the wrong real thing", which is the failure that survives review because
+ * every value in it is plausible.
+ *
+ * Entries are `port:AdapterName`, matched on the adapter's *name* rather than
+ * its full label, so `llm:AnthropicLlmAdapter` keeps matching when the model in
+ * the parenthesised suffix changes.
+ */
+export function checkAdapterAllowList(env: Env): readonly string[] {
+  if (env.DEPLOY_ENV !== 'prod') return [];
+  if (env.ADAPTER_ALLOWLIST.length === 0) {
+    return ['ADAPTER_ALLOWLIST is empty; production requires every live adapter to be named'];
+  }
+
+  const allowed = new Map<string, Set<string>>();
+  const violations: string[] = [];
+  for (const entry of env.ADAPTER_ALLOWLIST) {
+    const [port, adapter] = entry.split(':', 2);
+    if (port === undefined || adapter === undefined || adapter === '') {
+      violations.push(`ADAPTER_ALLOWLIST entry "${entry}" is not of the form port:AdapterName`);
+      continue;
+    }
+    if (!(PORTS as readonly string[]).includes(port)) {
+      violations.push(`ADAPTER_ALLOWLIST names unknown port "${port}"`);
+      continue;
+    }
+    const set = allowed.get(port) ?? new Set<string>();
+    set.add(adapter);
+    allowed.set(port, set);
+  }
+
+  for (const selection of selectAdapters(env)) {
+    const permitted = allowed.get(selection.port);
+    const name = adapterName(selection.adapter);
+    if (permitted === undefined) {
+      violations.push(
+        `port "${selection.port}" resolved to ${name} but ADAPTER_ALLOWLIST says nothing about it`,
+      );
+      continue;
+    }
+    if (!permitted.has(name)) {
+      violations.push(
+        `port "${selection.port}" resolved to ${name}, which is not in the allow-list [${[...permitted].join(', ')}]`,
+      );
+    }
+  }
+
+  return violations;
+}
+
+/** `FailoverSpeech(Sarvam:x → Google:y)` → `FailoverSpeech`. */
+function adapterName(label: string): string {
+  const open = label.indexOf('(');
+  return open === -1 ? label : label.slice(0, open);
 }
 
 /**
@@ -300,8 +430,23 @@ function canFallBackToGoogle(env: Env): boolean {
 }
 
 export function formatAdapterSelection(env: Env): string[] {
-  return selectAdapters(env).map((selection) => {
+  const lines = selectAdapters(env).map((selection) => {
     const mode = selection.implemented ? (selection.sandbox ? 'SANDBOX' : 'LIVE') : 'PENDING';
     return `adapter[${selection.port}] ${mode} → ${selection.adapter} (${selection.reason})`;
   });
+
+  // The allow-list result is part of the boot banner rather than a separate
+  // debug call, because "which adapters is prod running" and "were they the
+  // ones we said" are the same question asked by the same person at the same
+  // moment.
+  if (env.DEPLOY_ENV === 'prod') {
+    const violations = checkAdapterAllowList(env);
+    lines.push(
+      violations.length === 0
+        ? `adapter-allowlist OK (${env.ADAPTER_ALLOWLIST.join(', ')})`
+        : `adapter-allowlist VIOLATED: ${violations.join(' | ')}`,
+    );
+  }
+
+  return lines;
 }

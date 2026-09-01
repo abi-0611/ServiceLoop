@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   bigint,
+  boolean,
   char,
   index,
   integer,
@@ -187,12 +188,36 @@ export const auditEvents = pgTable(
     prevHash: char('prev_hash', { length: 64 }).notNull(),
     hash: char('hash', { length: 64 }).notNull(),
     traceId: text('trace_id').notNull(),
+    /**
+     * The erased data principal this row is about (phase 7.2).
+     *
+     * Written by the deletion cascade, alongside the payload rewrite. It is what
+     * keeps the chain joinable after the customer row is gone: "show me every
+     * decision taken about this person" is still answerable, and the answer no
+     * longer names them.
+     */
+    subjectPseudonym: text('subject_pseudonym'),
+    /**
+     * This row's payload has been rewritten by an approved erasure, so its
+     * stored `hash` no longer matches its stored payload.
+     *
+     * The hash is deliberately *not* recomputed. Re-hashing would change every
+     * subsequent link and make a chain verified last year verify differently
+     * today, which destroys the only property the chain has. So the verifier
+     * reads this flag and reports such rows as `redacted` rather than `broken` —
+     * a distinction that has to exist, because otherwise honouring a customer's
+     * legal right would look exactly like tampering.
+     */
+    payloadRedacted: boolean('payload_redacted').notNull().default(false),
     createdAt: createdAt(),
   },
   (table) => [
     uniqueIndex('audit_events_shop_seq_key').on(table.shopId, table.seq),
     uniqueIndex('audit_events_hash_key').on(table.hash),
     index('audit_events_entity_idx').on(table.shopId, table.entityType, table.entityId),
+    index('audit_events_pseudonym_idx')
+      .on(table.shopId, table.subjectPseudonym)
+      .where(sql`subject_pseudonym is not null`),
   ],
 );
 

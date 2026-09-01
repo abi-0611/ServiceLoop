@@ -1,0 +1,105 @@
+name: Deploy
+
+# Merge to `main` deploys staging. Production is a manual trigger.
+#
+# That asymmetry is the whole design. Staging exists to be deployed to
+# constantly and without ceremony — a staging environment that lags main is a
+# staging environment nobody trusts. Production is a decision somebody makes,
+# with a tag, at a time they choose, having looked at staging first.
+#
+# Neither path can skip the migration gate: `deploy.sh` runs migrations as a
+# Cloud Run job and the job's exit code stops the deploy. A service running
+# against a schema it does not understand is how a column read as null gets
+# written as a default.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which environment to deploy
+        type: choice
+        options: [staging, prod]
+        default: staging
+        required: true
+
+concurrency:
+  # Never two deploys to the same environment at once. Cloud Run would serve
+  # three revisions during the overlap, and the migration jobs would race.
+  group: deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: deploy ${{ github.event.inputs.environment || 'staging' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # A GitHub environment, so production can carry a required reviewer. That
+    # approval is the human gate; everything below it is mechanical.
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `deploy.sh` tags images with the short SHA and refuses a dirty tree
+          # against prod, so it needs real git metadata rather than a tarball.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Belt and braces: CI has already run this on the commit, but a deploy
+      # that builds an image from code that does not typecheck is a deploy that
+      # fails at runtime instead of at build time.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy
+        # Build → migrate → deploy three services → smoke. The script is the
+        # same one an operator runs by hand, deliberately: a CI-only deploy path
+        # is a path nobody can execute during an incident, which is exactly when
+        # they need to.
+        run: infra/deploy/deploy.sh ${{ github.event.inputs.environment || 'staging' }}
+
+      - name: Rollback on smoke failure
+        # Staging only, and automatic. A failed staging smoke means the revision
+        # serving traffic is broken, and leaving it there blocks everyone else's
+        # testing until somebody notices.
+        #
+        # Production is deliberately *not* rolled back automatically: a prod
+        # smoke failure needs a person to decide whether the fault is the
+        # release or the check, and an automatic rollback would destroy the
+        # evidence either way. The runbook covers it.
+        if: failure() && (github.event.inputs.environment || 'staging') == 'staging'
+        run: infra/deploy/rollback.sh staging
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy to ${{ github.event.inputs.environment || 'staging' }}"
+            echo
+            echo "Commit: \`${GITHUB_SHA:0:7}\`"
+            echo "Result: ${{ job.status }}"
+            echo
+            echo "Rollback: \`infra/deploy/rollback.sh ${{ github.event.inputs.environment || 'staging' }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

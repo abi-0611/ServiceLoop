@@ -1,0 +1,173 @@
+# Alert rules (phase 7.4).
+#
+# Six rules, and the number is deliberate. An alert stream that fires for
+# everything is one an owner mutes, and a muted stream is worse than none
+# because the shop believes it has one — the same reasoning that keeps
+# `ALERT_KINDS` to five in the product itself.
+#
+# Each rule below names, in its annotations, the runbook section an operator
+# should open. An alert with no runbook is a page that wakes somebody up to
+# think from first principles at 3am.
+#
+# `for:` durations are as important as the thresholds. Every one of these
+# conditions is true for a few seconds during an ordinary deploy, and a rule
+# that fires on a rolling restart is a rule people learn to ignore.
+
+groups:
+  - name: serviceloop-delivery
+    rules:
+      # The single most important alert in the system. Everything customer-
+      # facing leaves through the outbox, so this climbing means messages are
+      # not being sent — and it climbs before anybody complains, which no other
+      # signal does.
+      - alert: OutboxBacklogGrowing
+        expr: serviceloop_outbox_oldest_pending_seconds > 60
+        for: 2m
+        labels:
+          severity: page
+          runbook: outbox
+        annotations:
+          summary: 'The oldest unsent outbox row is {{ $value | humanizeDuration }} old'
+          description: >-
+            Nothing customer-facing is leaving the system. Check the worker
+            process is running and that the dispatcher is not stuck on a poison
+            row. Runbook: docs/runbooks/alerts.md#outbox-backlog
+          impact: 'Customers are not receiving messages they are waiting for.'
+
+      # Growth, not depth. A dead-letter queue with forty rows that has been
+      # forty for a week is a known problem somebody has triaged; forty new rows
+      # in ten minutes is a handler that has started failing on live traffic.
+      - alert: DeadLetterGrowth
+        expr: increase(serviceloop_dead_lettered_total[10m]) > 5
+        for: 5m
+        labels:
+          severity: page
+          runbook: dlq
+        annotations:
+          summary: '{{ $value }} jobs dead-lettered in the last ten minutes'
+          description: >-
+            A handler is failing repeatedly on live traffic. Inspect the DLQ
+            before replaying: a replay of a poison message re-runs the failure.
+            Runbook: docs/runbooks/alerts.md#dead-letter-growth
+          impact: 'Work is being dropped rather than retried.'
+
+      - alert: WebhookErrorBurst
+        expr: |
+          sum(rate(serviceloop_webhook_requests_total{outcome="error"}[5m]))
+            / clamp_min(sum(rate(serviceloop_webhook_requests_total[5m])), 0.001) > 0.1
+        for: 5m
+        labels:
+          severity: page
+          runbook: webhooks
+        annotations:
+          summary: 'More than 10% of provider webhooks are failing'
+          description: >-
+            Meta and Razorpay retry 5xx and eventually give up. Sustained
+            failure here loses inbound customer messages permanently.
+            Runbook: docs/runbooks/alerts.md#webhook-errors
+          impact: 'Inbound customer messages are being lost.'
+
+  - name: serviceloop-model
+    rules:
+      - alert: LlmErrorRateHigh
+        expr: |
+          sum(rate(serviceloop_llm_calls_total{outcome="error"}[10m]))
+            / clamp_min(sum(rate(serviceloop_llm_calls_total[10m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warn
+          runbook: llm
+        annotations:
+          summary: 'Model error rate is {{ $value | humanizePercentage }}'
+          description: >-
+            The agent degrades to queue-and-apologise mode rather than sending
+            nonsense, so this is a warning and not a page — but a shop's
+            approvals are stalling behind advisor tasks.
+            Runbook: docs/runbooks/playbooks.md#llm-provider-down
+
+      # A daily spend anomaly rather than a fixed ceiling: shops differ by an
+      # order of magnitude, and a threshold that suits the busiest is silent for
+      # the smallest. Four times the trailing week's hourly mean is a runaway
+      # loop, not a busy Saturday.
+      - alert: ModelSpendAnomaly
+        expr: |
+          sum(rate(serviceloop_llm_cost_usd_micros_total[1h]))
+            > 4 * sum(rate(serviceloop_llm_cost_usd_micros_total[7d]))
+        for: 30m
+        labels:
+          severity: warn
+          runbook: cost
+        annotations:
+          summary: 'Model spend this hour is more than four times the weekly average'
+          description: >-
+            Usually an agent loop retrying, or a shop's autonomy having been
+            raised. Check `llm_usage` grouped by task class.
+            Runbook: docs/runbooks/alerts.md#cost-anomaly
+
+  - name: serviceloop-integrity
+    rules:
+      # There is no threshold on this one and there should not be. The audit
+      # chain either verifies or it does not, and a single failure means either
+      # a bug in the writer or somebody editing rows directly — both of which
+      # are "stop and look now".
+      - alert: AuditChainVerificationFailed
+        expr: increase(serviceloop_audit_chain_verifications_total{outcome="broken"}[1h]) > 0
+        labels:
+          severity: page
+          runbook: audit
+        annotations:
+          summary: 'The audit chain failed verification'
+          description: >-
+            Either the chain writer has a bug or rows have been modified outside
+            the application. Do not repair the chain: capture the break point
+            first. Runbook: docs/runbooks/alerts.md#audit-chain
+
+      # A statutory clock. Nothing else in the system would notice a stuck
+      # deletion: it fails quietly, the customer is not told, and the shop finds
+      # out when a regulator asks.
+      - alert: DataRequestOverdue
+        expr: serviceloop_data_requests_overdue > 0
+        for: 1h
+        labels:
+          severity: warn
+          runbook: dpdp
+        annotations:
+          summary: '{{ $value }} approved data request(s) past their execution time'
+          description: >-
+            A DPDP erasure or export was approved and has not run. The Act
+            expects these to be honoured within a reasonable time.
+            Runbook: docs/runbooks/alerts.md#dpdp-overdue
+
+  - name: serviceloop-channels
+    rules:
+      - alert: WhatsAppChannelDown
+        expr: increase(serviceloop_channel_failover_total{state="DOWN"}[15m]) > 0
+        labels:
+          severity: page
+          runbook: whatsapp
+        annotations:
+          summary: 'The WhatsApp channel circuit breaker opened'
+          description: >-
+            Sends are falling through to SMS where a shop has it enabled, and
+            failing where it does not. Check Meta status before anything else.
+            Runbook: docs/runbooks/playbooks.md#whatsapp-outage
+          impact: 'Customer messages are going out over SMS, or not at all.'
+
+      # The block that means a template was rejected or paused — an outage
+      # nobody would otherwise notice until a shop asked why their customers had
+      # gone quiet. Deliberately narrow: a rise in CONSENT_REVOKED is the system
+      # working, and alerting on it would be alerting on customers exercising a
+      # right.
+      - alert: TemplateSendsBlocked
+        expr: |
+          sum(rate(serviceloop_outbound_blocked_total{code="WINDOW_CLOSED_NEEDS_TEMPLATE"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: warn
+          runbook: templates
+        annotations:
+          summary: 'Business-initiated messages are being blocked for want of a template'
+          description: >-
+            Usually a template Meta has paused or rejected. Open the template ops
+            screen and check the quality rating.
+            Runbook: docs/runbooks/alerts.md#template-blocked

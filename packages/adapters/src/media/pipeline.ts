@@ -6,6 +6,8 @@ import {
   type AudioNormalisationFailure,
   type AudioNormaliserPort,
 } from './audio';
+import { createAntivirusPort } from '../factory';
+import type { AntivirusPort } from '../antivirus/port';
 import { SharpImageProcessor, type ImageProcessorPort } from './image-processor';
 import { sniffContentType, type SniffResult } from './sniff';
 import { mediaKey, type StoragePort } from '../storage/port';
@@ -96,7 +98,21 @@ export type IngestRejection =
     }
   | { readonly code: 'EMPTY'; readonly reason: string }
   | { readonly code: 'UNSUPPORTED_TYPE'; readonly reason: string; readonly contentType: string }
-  | { readonly code: 'UNREADABLE'; readonly reason: string };
+  | { readonly code: 'UNREADABLE'; readonly reason: string }
+  /**
+   * The scanner found something, or (fail-closed only) could not look.
+   *
+   * A rejection rather than a quarantine-and-store, and the reason is that
+   * there is nothing useful to do with a stored infected file: no advisor
+   * should open it, no customer should get it back, and keeping it means
+   * keeping malware in a bucket the console has read access to.
+   */
+  | {
+      readonly code: 'INFECTED';
+      readonly reason: string;
+      readonly signature: string;
+    }
+  | { readonly code: 'SCAN_UNAVAILABLE'; readonly reason: string };
 
 export type IngestResult =
   | { readonly ok: true; readonly media: StoredMedia }
@@ -108,6 +124,20 @@ export interface MediaPipelineDeps {
   readonly images?: ImageProcessorPort;
   readonly audio?: AudioNormaliserPort;
   readonly newId?: () => string;
+  /**
+   * Upload scanning (phase 7.1). Optional so a unit test need not stand one up;
+   * every composition root supplies one, because `createChannelPorts` always
+   * returns one.
+   */
+  readonly antivirus?: AntivirusPort;
+  /**
+   * Refuse the upload when the scanner cannot answer.
+   *
+   * The trade is real in both directions and the default is fail-*open*: this
+   * is a workshop customer photographing a dashboard light, and a clamd restart
+   * that eats their photo costs a job card. See `ANTIVIRUS_FAIL_CLOSED`.
+   */
+  readonly antivirusFailClosed?: boolean;
 }
 
 /** Re-exported: the rejection reason and the i18n copy must agree word for word. */
@@ -166,6 +196,43 @@ export class MediaPipeline {
           limitBytes: limit,
         },
       };
+    }
+
+    /**
+     * Scanned *before* the bytes reach object storage, which is the whole
+     * point of where this line sits. Scanning after the put would mean an
+     * infected file exists in a bucket the console can read, and the cleanup
+     * would be a delete that has to succeed — one more thing that can fail
+     * while malware is at rest in somebody's GCS bucket.
+     */
+    const scanner = this.deps.antivirus;
+    if (scanner !== undefined) {
+      const verdict = await scanner.scan(request.bytes, request.filename ?? null);
+      if (verdict.status === 'INFECTED') {
+        return {
+          ok: false,
+          rejection: {
+            code: 'INFECTED',
+            reason: 'That file did not pass our virus scan, so we have not stored it',
+            signature: verdict.signature,
+          },
+        };
+      }
+      if (verdict.status === 'UNAVAILABLE') {
+        if (this.deps.antivirusFailClosed === true) {
+          return {
+            ok: false,
+            rejection: {
+              code: 'SCAN_UNAVAILABLE',
+              reason: `The virus scanner could not check that file (${verdict.reason})`,
+            },
+          };
+        }
+        // Fail-open, but never silently: the warning rides on the stored media
+        // descriptor, so "which files went in unscanned during the outage" is
+        // answerable afterwards instead of being a shrug.
+        warnings.push(`Virus scan unavailable: ${verdict.reason}`);
+      }
     }
 
     const mediaId = this.newId();
@@ -387,11 +454,17 @@ export function createAudioNormaliser(env: Env): AudioNormaliserPort {
   );
 }
 
-export function createMediaPipeline(env: Env, storage: StoragePort): MediaPipeline {
+export function createMediaPipeline(
+  env: Env,
+  storage: StoragePort,
+  antivirus?: AntivirusPort,
+): MediaPipeline {
   return new MediaPipeline({
     storage,
     limits: limitsFromEnv(env),
     images: new SharpImageProcessor(),
     audio: createAudioNormaliser(env),
+    antivirus: antivirus ?? createAntivirusPort(env),
+    antivirusFailClosed: env.ANTIVIRUS_FAIL_CLOSED,
   });
 }

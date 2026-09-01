@@ -29,6 +29,7 @@ import type {
   ConversationStore,
   MessageStore,
   RetentionFrequencyReader,
+  SmsFallbackContent,
 } from './ports';
 import { isWindowOpen } from './session';
 import type { ConversationSnapshot, OutboundContent } from './types';
@@ -135,6 +136,23 @@ export interface OutboundRequest {
    * templated and talk its way from L1 into auto-sending free prose.
    */
   readonly templated?: boolean;
+  /**
+   * What this message would say over SMS if WhatsApp were unreachable
+   * (phase 7.3).
+   *
+   * Supplied by the composer, never derived here, and the reason is legal
+   * rather than architectural: an Indian SMS may only carry DLT-registered
+   * content, so the fallback text has to be one a human submitted to the
+   * registry and an operator approved. A gate that rendered its own plain-text
+   * version of an interactive message would produce something the operator
+   * accepts and then silently discards, which looks exactly like a delivered
+   * message from in here.
+   *
+   * Omitting it is a legitimate choice and the common one. A message with no
+   * fallback simply does not fall back: the send fails, and the ladder raises
+   * the advisor task it raises for any other unsendable rung.
+   */
+  readonly smsFallback?: SmsFallbackContent;
 }
 
 export type GateOutcome =
@@ -824,7 +842,13 @@ export class OutboundGate<Tx> {
         shopId: request.shopId,
         to: address,
         content: request.content,
+        ...(request.smsFallback === undefined ? {} : { fallback: request.smsFallback }),
       });
+
+      // What the row was written with, versus what actually carried it. They
+      // differ exactly when a failover sender dropped to SMS.
+      const declared = this.deps.sender.channel;
+      const carriedBy = result.channel ?? declared;
 
       await this.deps.uow.transaction(async (tx) => {
         const sentAt = this.clock.now();
@@ -834,6 +858,7 @@ export class OutboundGate<Tx> {
           providerConversationId: result.providerConversationId,
           conversationCategory: result.category,
           sentAt,
+          ...(carriedBy === declared ? {} : { channel: carriedBy }),
         });
         await this.deps.conversations.recordOutbound(tx, {
           conversationId: request.conversationId,
@@ -855,6 +880,8 @@ export class OutboundGate<Tx> {
             providerMessageId: result.providerMessageId,
             category: result.category,
             approved: alreadyPersisted,
+            channel: carriedBy,
+            ...(carriedBy === declared ? {} : { fellBackFrom: declared }),
           },
           traceId: request.traceId,
         });
@@ -868,7 +895,7 @@ export class OutboundGate<Tx> {
           payload: {
             messageId,
             conversationId: request.conversationId,
-            channel: this.deps.sender.channel,
+            channel: carriedBy,
             purpose: request.purpose,
             templateName:
               request.content.kind === 'template' ? request.content.templateName : null,

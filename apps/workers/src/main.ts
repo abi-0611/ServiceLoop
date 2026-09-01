@@ -42,6 +42,7 @@ import {
 import { defaultShopConfig } from '@serviceloop/config';
 import { QUEUE_NAMES } from '@serviceloop/shared';
 import type { Worker } from 'bullmq';
+import { startTracing, stopTracing } from '@serviceloop/observability';
 import { createConsumer } from './consumer';
 import { DeferredSender, StorageMediaBytesLoader } from './deferred-sender';
 import {
@@ -69,9 +70,12 @@ import {
   StuckApprovalSentinel,
 } from './retention-sentinels';
 import { createLoopStores, listActiveShopIds } from './loop-wiring';
+import { DataRequestSentinel } from './privacy-sentinel';
+import { createDataPrincipalService } from './privacy-wiring';
 import { createRetentionWiring } from './retention-wiring';
 import { createAudioTranscodeHandler } from './handlers/audio-transcode';
 import { createChainIntegrityHandler } from './handlers/chain-integrity';
+import { createCostMeterHandler } from './handlers/cost-meter';
 import { HandlerRegistry } from './handlers/registry';
 import { createLogger } from './logger';
 import { startMetricsServer } from './metrics';
@@ -85,6 +89,11 @@ import { connectionFor, createQueues, createRedis } from './queues';
  * jobs finish, then close connections.
  */
 async function main(): Promise<void> {
+  // Before anything that touches http, pg or ioredis: the auto-instrumentations
+  // patch those modules as they load, and a provider registered afterwards
+  // instruments nothing while looking exactly like a sampling problem.
+  startTracing({ component: 'workers' });
+
   const env = getEnv();
   const logger = createLogger('workers');
 
@@ -296,7 +305,10 @@ async function main(): Promise<void> {
     .register(createLedgerHandler(retention))
     .register(createDeliveredHandler(retention))
     .register(createConversionHandler(retention))
-    .register(createExceptionAlertHandler(retention));
+    .register(createExceptionAlertHandler(retention))
+    // Phase 7.3. A consumer, not a call inside the gate: a metering failure
+    // must never fail a customer send.
+    .register(createCostMeterHandler());
   logger.info(
     { handlers: registry.all().map((handler) => handler.name) },
     'event handlers registered',
@@ -364,6 +376,18 @@ async function main(): Promise<void> {
   const stuckApprovals = new StuckApprovalSentinel(retentionDeps, env.ALERT_SCAN_MS);
   const digestScheduler = new DigestScheduler(retentionDeps, env.DIGEST_SCAN_MS);
 
+  /* The phase-7.2 sentinel. An approval schedules the cascade; this runs it
+   * once the shop's grace window has elapsed. Without it an approved deletion
+   * would sit `SCHEDULED` for ever unless somebody pressed "run now", and a
+   * statutory obligation that depends on a person remembering to press a button
+   * is not a workflow. */
+  const dataRequests = new DataRequestSentinel(
+    sentinelDeps,
+    createDataPrincipalService({ uow, audit, outbox, storage }),
+    env.DPDP_SCAN_MS,
+    env.DPDP_BATCH_SIZE,
+  );
+
   let healthy = true;
   // A worker that exited with calls in flight would leave customers listening
   // to a line nothing is on the other end of.
@@ -379,6 +403,7 @@ async function main(): Promise<void> {
   feedbackSentinel.start();
   stuckApprovals.start();
   digestScheduler.start();
+  dataRequests.start();
 
   logger.info({ queues: QUEUE_NAMES, metricsPort: env.WORKERS_METRICS_PORT }, 'workers ready');
 
@@ -393,6 +418,7 @@ async function main(): Promise<void> {
     await feedbackSentinel.stop();
     await stuckApprovals.stop();
     await digestScheduler.stop();
+    await dataRequests.stop();
     await Promise.all(consumers.map((consumer) => consumer.close()));
     await escalationWorker.close();
     await escalationQueue.close();
@@ -400,6 +426,7 @@ async function main(): Promise<void> {
     await redis.quit();
     await database.close();
     metricsServer.close();
+    await stopTracing();
     logger.info('workers stopped');
   };
 

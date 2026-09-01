@@ -1,6 +1,13 @@
 import { relations } from 'drizzle-orm';
 import { boolean, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import { createdAt, deletedAt, encryptedText, primaryId, updatedAt } from './columns';
+import {
+  createdAt,
+  deletedAt,
+  encryptedText,
+  primaryId,
+  timestamptz,
+  updatedAt,
+} from './columns';
 import { languageEnum, staffRoleEnum } from './enums';
 
 /**
@@ -80,6 +87,21 @@ export const customers = pgTable(
     preferredLanguage: languageEnum('preferred_language').notNull().default('en'),
     whatsappOptIn: boolean('whatsapp_opt_in').notNull().default(false),
     notes: text('notes'),
+    /**
+     * The one-way pseudonym this customer's surviving rows are keyed by after
+     * an erasure (phase 7.2). Null until a deletion request is raised.
+     */
+    subjectPseudonym: text('subject_pseudonym'),
+    /**
+     * When the DPDP cascade destroyed this record's personal data.
+     *
+     * Distinct from `deletedAt`, which is an ordinary soft delete — an advisor
+     * removing a duplicate — and is reversible. `erasedAt` is not: the encrypted
+     * columns have been overwritten and there is nothing to restore. The row
+     * survives only so foreign keys resolve and so the completion report has
+     * something to point at.
+     */
+    erasedAt: timestamptz('erased_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     deletedAt: deletedAt(),

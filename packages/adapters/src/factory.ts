@@ -5,6 +5,7 @@ import {
   VoiceNoteDraftExtractor,
 } from './intake/draft-extractors';
 import { AdapterDraftExtraction } from './intake/extraction';
+import type { ChannelSender } from '@serviceloop/domain';
 import { WhatsAppChannelSender, WhatsAppMediaFetcher } from './whatsapp/channel-sender';
 import { AnthropicLlmAdapter } from './llm/anthropic-adapter';
 import {
@@ -33,6 +34,14 @@ import type { TelephonyPort } from './telephony/port';
 import { MockPaymentsAdapter } from './payments/mock-adapter';
 import type { PaymentsPort } from './payments/port';
 import { RazorpayPaymentsAdapter } from './payments/razorpay-adapter';
+import { ClamAvScanner } from './antivirus/clamav-scanner';
+import { PermissiveScanner } from './antivirus/permissive-scanner';
+import type { AntivirusPort } from './antivirus/port';
+import { SmsChannelSender, type SmsShopSettings } from './sms/channel-sender';
+import { DltSmsAdapter } from './sms/dlt-adapter';
+import { ChannelFailoverSender, type ChannelFailoverEvent } from './sms/failover-sender';
+import type { SmsPort } from './sms/port';
+import { SandboxSmsAdapter } from './sms/sandbox-adapter';
 import { InMemoryNotifier, LoggingNotifier, type LogSink } from './notifier/sandbox-notifiers';
 import type { NotifierPort } from './notifier/port';
 import { InMemoryStorage } from './storage/in-memory-storage';
@@ -108,6 +117,13 @@ export interface WhatsAppFactoryOptions {
   readonly redis?: EvalCapableRedis;
   readonly rateLimiter?: WhatsAppRateLimiter;
   /**
+   * Reads a shop's DLT registration (phase 7.3). Supplying it is what turns the
+   * SMS rung on; without it `createChannelPorts` returns a plain WhatsApp
+   * sender, which is correct for a caller with no database — a unit test.
+   */
+  readonly smsSettings?: (shopId: string) => Promise<SmsShopSettings | null>;
+  readonly onFailover?: (event: ChannelFailoverEvent) => void;
+  /**
    * Where model-usage rows go (phase 3.1). Supplying it wraps the LLM port in
    * the meter; omitting it is only correct for callers with no database, which
    * in practice means a unit test.
@@ -148,6 +164,88 @@ export function createWhatsAppPort(env: Env, options: WhatsAppFactoryOptions = {
     },
     { rateLimiter },
   );
+}
+
+/**
+ * The upload scanner (phase 7.1).
+ *
+ * Always returns *something*. There is no "antivirus is not configured" branch
+ * that returns null and no null check at the call site, because a nullable
+ * scanner is a scanner somebody forgets to check for — the media pipeline calls
+ * `scan()` unconditionally and the boot log says which implementation answered.
+ */
+export function createAntivirusPort(env: Env): AntivirusPort {
+  if (env.ANTIVIRUS_DRIVER !== 'clamav') return new PermissiveScanner();
+  return new ClamAvScanner({
+    host: env.CLAMAV_HOST,
+    port: env.CLAMAV_PORT,
+    timeoutMs: env.CLAMAV_TIMEOUT_MS,
+  });
+}
+
+/**
+ * The SMS port (phase 7.3). DEMO_MODE forces the sandbox for the same reason
+ * every other transport is forced: nobody's handset should be billable from a
+ * developer's shell.
+ */
+export function createSmsPort(env: Env): SmsPort {
+  const selection = selectAdapters(env).find((entry) => entry.port === 'sms');
+  if (selection?.sandbox !== false) {
+    return new SandboxSmsAdapter(env.SMS_SENDER_ID ?? 'SLOOPS');
+  }
+
+  const missing = (['SMS_SENDER_ID', 'SMS_DLT_ENTITY_ID', 'SMS_PROVIDER_API_KEY'] as const).filter(
+    (key) => env[key] === undefined,
+  );
+  if (missing.length > 0) {
+    throw new ConfigurationError(
+      `SMS_DRIVER=dlt is selected but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set`,
+      { missing },
+    );
+  }
+
+  return new DltSmsAdapter({
+    baseUrl: env.SMS_PROVIDER_BASE_URL,
+    apiKey: env.SMS_PROVIDER_API_KEY as string,
+    entityId: env.SMS_DLT_ENTITY_ID as string,
+    senderId: env.SMS_SENDER_ID as string,
+    timeoutMs: env.SMS_TIMEOUT_MS,
+  });
+}
+
+export interface ChannelSenderOptions {
+  /**
+   * Reads a shop's DLT registration. Required for the fallback to be built at
+   * all: without it there is no way to know which registered template a message
+   * maps to, and a fallback that guessed would be a fallback that gets dropped.
+   */
+  readonly smsSettings?: (shopId: string) => Promise<SmsShopSettings | null>;
+  readonly onFailover?: (event: ChannelFailoverEvent) => void;
+  readonly sms?: SmsPort;
+}
+
+/**
+ * The `ChannelSender` the OutboundGate holds.
+ *
+ * Plain WhatsApp when the fallback is switched off or unconfigured; WhatsApp
+ * wrapped in `ChannelFailoverSender` when it is. Returned as one object either
+ * way, so the gate — and therefore every send path in the system — has exactly
+ * one transport dependency whatever the deployment looks like.
+ */
+export function createChannelSender(
+  env: Env,
+  whatsapp: WhatsAppPort,
+  options: ChannelSenderOptions = {},
+): WhatsAppChannelSender | ChannelFailoverSender {
+  const primary = new WhatsAppChannelSender(whatsapp);
+  if (!env.SMS_FALLBACK_ENABLED || options.smsSettings === undefined) return primary;
+
+  const sms = new SmsChannelSender(options.sms ?? createSmsPort(env), options.smsSettings);
+  return new ChannelFailoverSender(primary, sms, {
+    threshold: env.CHANNEL_FAILOVER_THRESHOLD,
+    probeAfterMs: env.CHANNEL_FAILOVER_PROBE_MS,
+    ...(options.onFailover === undefined ? {} : { onStateChange: options.onFailover }),
+  });
 }
 
 /**
@@ -507,13 +605,28 @@ export function createDraftExtractors(
  */
 export interface ChannelPorts {
   readonly whatsapp: WhatsAppPort;
-  readonly sender: WhatsAppChannelSender;
+  /**
+   * What the gate sends through. Typed as the domain's `ChannelSender` rather
+   * than as `WhatsAppChannelSender`, because since phase 7.3 it may be the
+   * failover pair — and a caller that narrowed it back to WhatsApp would be a
+   * caller that loses the SMS rung without a compile error.
+   */
+  readonly sender: ChannelSender;
   readonly mediaFetch: WhatsAppMediaFetcher;
   readonly llm: LlmPort;
   readonly speech: SpeechPort;
   readonly ocr: OcrPort;
   readonly extraction: AdapterDraftExtraction;
   readonly rateLimiter: WhatsAppRateLimiter;
+  /** Upload scanning. Always present; see `createAntivirusPort`. */
+  readonly antivirus: AntivirusPort;
+  /**
+   * Non-null only when the fallback is wired, and exposed so the health
+   * endpoint and the outage drill can ask whether WhatsApp is currently
+   * circuit-broken. Reading channel health off a private field via a cast is
+   * the alternative, and it is worse.
+   */
+  readonly failover: ChannelFailoverSender | null;
 }
 
 export function createChannelPorts(env: Env, options: WhatsAppFactoryOptions = {}): ChannelPorts {
@@ -527,14 +640,21 @@ export function createChannelPorts(env: Env, options: WhatsAppFactoryOptions = {
   const speech = createSpeechPort(env);
   const extractors = createDraftExtractors(env, { llm, speech });
 
+  const sender = createChannelSender(env, whatsapp, {
+    ...(options.smsSettings === undefined ? {} : { smsSettings: options.smsSettings }),
+    ...(options.onFailover === undefined ? {} : { onFailover: options.onFailover }),
+  });
+
   return {
     whatsapp,
-    sender: new WhatsAppChannelSender(whatsapp),
+    sender,
     mediaFetch: new WhatsAppMediaFetcher(whatsapp),
     llm,
     speech,
     ocr: extractors.photo,
     extraction: new AdapterDraftExtraction(extractors.photo, extractors.text, extractors.voice),
     rateLimiter,
+    antivirus: createAntivirusPort(env),
+    failover: sender instanceof ChannelFailoverSender ? sender : null,
   };
 }

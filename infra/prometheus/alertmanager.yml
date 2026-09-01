@@ -1,0 +1,33 @@
+# Alertmanager routing for the development stack (phase 7.4).
+#
+# Two receivers and one inhibition rule. The inhibition is the part worth
+# reading: when the outbox is backed up, half the other rules fire too — a
+# queue that is not draining produces webhook errors, model timeouts and a
+# growing dead-letter queue. Paging on all five tells an operator nothing they
+# could not see from the first one, and teaches them to silence the group.
+route:
+  receiver: default
+  group_by: ['alertname', 'severity']
+  # Long enough that a rolling restart's flap is one notification, short enough
+  # that a real outage is known about inside a minute.
+  group_wait: 45s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: ['severity = page']
+      receiver: page
+      repeat_interval: 1h
+
+receivers:
+  # The dev stack has nowhere to notify, and a webhook pointing at a service
+  # nobody runs would produce a stream of delivery errors that hides the
+  # alerts themselves. Production replaces both of these; see
+  # `docs/runbooks/alerts.md`.
+  - name: default
+  - name: page
+
+inhibit_rules:
+  # A backed-up outbox causes everything downstream to look broken.
+  - source_matchers: ['alertname = OutboxBacklogGrowing']
+    target_matchers: ['severity =~ "page|warn"']
+    equal: ['deployment']

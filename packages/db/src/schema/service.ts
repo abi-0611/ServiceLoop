@@ -271,6 +271,14 @@ export const invoices = pgTable(
       .notNull()
       .references(() => customers.id, { onDelete: 'restrict' }),
     estimateId: uuid('estimate_id'),
+    /**
+     * Set when the customer this invoice belongs to has been erased
+     * (phase 7.2). The invoice itself is retained under the GST record-keeping
+     * carve-out; what is erased is who it was for.
+     */
+    subjectPseudonym: text('subject_pseudonym'),
+    /** End of the statutory retention window for this retained record. */
+    retainedUntil: timestamptz('retained_until'),
     number: text('number').notNull(),
     status: invoiceStatusEnum('status').notNull().default('DRAFT'),
     issuedAt: timestamptz('issued_at'),

@@ -11,7 +11,10 @@
     "start": "node dist/main.js",
     "test:unit": "vitest run src",
     "test": "vitest run",
-    "test:integration": "vitest run test"
+    "test:integration": "vitest run test",
+    "dlq:list": "tsx src/cli/dlq.ts list",
+    "dlq:replay": "tsx src/cli/dlq.ts replay",
+    "dlq:drop": "tsx src/cli/dlq.ts drop"
   },
   "dependencies": {
     "@serviceloop/adapters": "workspace:*",
@@ -19,6 +22,7 @@
     "@serviceloop/config": "workspace:*",
     "@serviceloop/db": "workspace:*",
     "@serviceloop/domain": "workspace:*",
+    "@serviceloop/observability": "workspace:^",
     "@serviceloop/shared": "workspace:*",
     "bullmq": "^5.34.5",
     "drizzle-orm": "^0.38.3",

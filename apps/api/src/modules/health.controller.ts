@@ -4,14 +4,25 @@ import type { Database } from '@serviceloop/db';
 import type { HealthResponse } from '@serviceloop/shared';
 import { sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
-import { collectDefaultMetrics, Registry } from 'prom-client';
+import {
+  collectRuntimeMetrics,
+  metricsContentType,
+  renderMetrics,
+} from '@serviceloop/observability';
 import { Public } from '../auth/auth.types';
 import { DATABASE, REDIS } from '../infra/tokens';
 
-/** Liveness, readiness and Prometheus metrics. */
+/**
+ * Liveness, readiness and Prometheus metrics.
+ *
+ * The metrics come from `@serviceloop/observability` rather than from a
+ * registry declared here (phase 7.4). A private registry per process is how the
+ * alert rules ended up naming series that only the *workers* exported: a rule
+ * evaluated against this endpoint matched nothing, and an alert that matches
+ * nothing looks exactly like a condition that never occurs.
+ */
 
-const registry = new Registry();
-collectDefaultMetrics({ register: registry, prefix: 'serviceloop_api_' });
+collectRuntimeMetrics('serviceloop_api_');
 
 @Controller()
 export class HealthController {
@@ -52,9 +63,9 @@ export class HealthController {
 
   @Public()
   @Get('metrics')
-  @Header('content-type', 'text/plain; version=0.0.4; charset=utf-8')
+  @Header('content-type', metricsContentType)
   async metrics(): Promise<string> {
-    return registry.metrics();
+    return renderMetrics();
   }
 }
 

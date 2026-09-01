@@ -281,5 +281,9 @@ function toChainEntry(row: AuditRow): AuditChainEntry {
     createdAt: row.createdAt.toISOString(),
     prevHash: row.prevHash,
     hash: row.hash,
+    // Carried through, or the flag is never set and a lawfully redacted row
+    // reads as tampering — which would make honouring a customer's erasure
+    // right look identical to an attack on the audit log.
+    payloadRedacted: row.payloadRedacted,
   };
 }

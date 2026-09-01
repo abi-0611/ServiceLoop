@@ -197,6 +197,14 @@ export const WaTemplateCategorySchema = enumOf(WA_TEMPLATE_CATEGORIES).schema;
 export type WaTemplateCategory = z.infer<typeof WaTemplateCategorySchema>;
 
 export const WA_TEMPLATE_STATUSES = [
+  /**
+   * In the manifest, never sent to Meta by this shop (phase 7.3).
+   *
+   * The only state a template-ops screen is really for. Without it the screen
+   * can show what has been submitted and cannot show what has not — and during
+   * onboarding, "what still needs submitting" is the entire question.
+   */
+  'NOT_SUBMITTED',
   'PENDING',
   'APPROVED',
   'REJECTED',
@@ -882,3 +890,114 @@ export type AlertKind = z.infer<typeof AlertKindSchema>;
 export const ROLLUP_SOURCES = ['LIVE', 'BACKFILL'] as const;
 export const RollupSourceSchema = enumOf(ROLLUP_SOURCES).schema;
 export type RollupSource = z.infer<typeof RollupSourceSchema>;
+
+/* -------------------------------------------------------------------------- *
+ * Phase 7 — DPDP data-principal workflows
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The two rights the DPDP Act 2023 gives a data principal that this system has
+ * to actually implement: access (as a portable export) and erasure.
+ *
+ * Correction is deliberately absent from this enum, and its absence is a design
+ * statement rather than an omission: a customer correcting their name or phone
+ * is an ordinary edit an advisor makes at the counter, already audited, and
+ * modelling it as an asynchronous "request" would make a five-second fix into a
+ * workflow with a queue.
+ */
+export const DATA_REQUEST_KINDS = ['EXPORT', 'DELETION'] as const;
+export const DataRequestKindSchema = enumOf(DATA_REQUEST_KINDS).schema;
+export type DataRequestKind = z.infer<typeof DataRequestKindSchema>;
+
+/**
+ * The lifecycle of a data-principal request.
+ *
+ * Longer than a boolean because deletion is irreversible and the Act expects a
+ * verified requester, so the states between "asked" and "done" are where the
+ * safety lives:
+ *
+ * - `RECEIVED`   — somebody asked. Nothing has been verified.
+ * - `VERIFIED`   — we are satisfied this is the data principal (an OTP to the
+ *                  number on file, or an advisor attesting an in-person ID check).
+ * - `APPROVED`   — a member of staff has authorised the cascade. Separate from
+ *                  VERIFIED on purpose: verifying identity and deciding to
+ *                  destroy records are different judgements by different people.
+ * - `SCHEDULED`  — inside the shop's grace window, running at `scheduled_for`.
+ *                  Cancellable. Exists because a deletion aimed at the wrong
+ *                  customer has no undo.
+ * - `RUNNING`    — the cascade is executing. A crash here is resumable, which
+ *                  is why steps are recorded individually.
+ * - `COMPLETED`  — every step ran; the completion report is attached.
+ * - `REJECTED`   — refused, with a reason the requester is told.
+ * - `CANCELLED`  — withdrawn during the grace window.
+ * - `FAILED`     — a step errored and could not be retried. Never silent.
+ */
+export const DATA_REQUEST_STATUSES = [
+  'RECEIVED',
+  'VERIFIED',
+  'APPROVED',
+  'SCHEDULED',
+  'RUNNING',
+  'COMPLETED',
+  'REJECTED',
+  'CANCELLED',
+  'FAILED',
+] as const;
+export const DataRequestStatusSchema = enumOf(DATA_REQUEST_STATUSES).schema;
+export type DataRequestStatus = z.infer<typeof DataRequestStatusSchema>;
+
+/** How we satisfied ourselves that the requester is the data principal. */
+export const DATA_REQUEST_VERIFICATIONS = [
+  /** One-time code to the phone number already on the customer record. */
+  'OTP_TO_NUMBER_ON_FILE',
+  /** An advisor checked a physical ID at the counter and attested to it. */
+  'STAFF_ATTESTED_IN_PERSON',
+  /** The request arrived on the customer's own authenticated WhatsApp thread. */
+  'AUTHENTICATED_THREAD',
+] as const;
+export const DataRequestVerificationSchema = enumOf(DATA_REQUEST_VERIFICATIONS).schema;
+export type DataRequestVerification = z.infer<typeof DataRequestVerificationSchema>;
+
+/**
+ * What a deletion did to one table.
+ *
+ * Three outcomes, and the distinction between them is the whole of DPDP
+ * compliance in this system:
+ *
+ * - `PURGED`        — rows destroyed. Personal data with no other basis to exist.
+ * - `PSEUDONYMISED` — the row survives with every identifier replaced by a
+ *                     one-way pseudonym. Used where a *number* must survive:
+ *                     the audit chain (removing a row breaks every hash after
+ *                     it) and the metric rollups (a deletion that moved last
+ *                     quarter's revenue would make the figures unauditable).
+ * - `RETAINED`      — the row is kept intact under a statutory carve-out, with
+ *                     its retention clock recorded. Invoices and GST records.
+ */
+export const CASCADE_ACTIONS = ['PURGED', 'PSEUDONYMISED', 'RETAINED'] as const;
+export const CascadeActionSchema = enumOf(CASCADE_ACTIONS).schema;
+export type CascadeAction = z.infer<typeof CascadeActionSchema>;
+
+/**
+ * Where a WhatsApp template stands with Meta, for one WABA (phase 7.3).
+ *
+ * Meta's own vocabulary, deliberately, plus one state of ours. Mirroring their
+ * names means an operator comparing this screen with the Business Manager is
+ * comparing like with like, and a status we invented — "pending", say, for
+ * their `IN_APPEAL` — would be a translation somebody has to hold in their head
+ * at the exact moment they are trying to work out why a message did not send.
+ *
+ * `NOT_SUBMITTED` is the one that is ours, and it is the important one: it is
+ * the state of every template in the manifest that nobody has sent to Meta yet.
+ * Without it, a template the code will happily try to use is simply absent from
+ * the screen, and absence reads as "fine".
+ */
+export const TEMPLATE_APPROVAL_STATUSES = [
+  'NOT_SUBMITTED',
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'PAUSED',
+  'DISABLED',
+] as const;
+export const TemplateApprovalStatusSchema = enumOf(TEMPLATE_APPROVAL_STATUSES).schema;
+export type TemplateApprovalStatus = z.infer<typeof TemplateApprovalStatusSchema>;

@@ -2,6 +2,8 @@ import type { Language } from '../enums';
 import { CATALOGUES, type StringKey } from './catalogue';
 
 export { CATALOGUES } from './catalogue';
+export * from './templates';
+export * from './template-ops';
 export type { StringKey, Catalogue } from './catalogue';
 export {
   isOptIn,

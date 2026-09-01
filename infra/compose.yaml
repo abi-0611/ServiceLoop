@@ -88,7 +88,105 @@ services:
         echo "bucket serviceloop-media ready"
     restart: 'no'
 
+  # ------------------------------------------------------------------ #
+  # Phase 7 — the observability and scanning stack.
+  #
+  # Every service below is in the `ops` profile, so `docker compose up -d`
+  # still starts the four containers a developer needs and nothing more.
+  # Grafana and Prometheus are for the day somebody is chasing a latency
+  # problem, and paying two hundred megabytes of RAM for them on every
+  # `pnpm dev` is how a developer learns to run the stack by hand instead.
+  #
+  #   docker compose --profile ops up -d
+  # ------------------------------------------------------------------ #
+
+  # NOTE ON PINNING: the four core services above are pinned by digest so a
+  # cold clone builds an identical environment. These four are pinned by tag
+  # only, and that is a deliberate, narrower promise rather than an oversight —
+  # they are development-time observability, never part of a deployed artefact,
+  # and a digest nobody has verified is worse than an honest tag. Before these
+  # are relied on in a shared environment, run `docker compose --profile ops
+  # pull` and paste the resolved digests in, as `docs/runbooks/observability.md`
+  # instructs.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: serviceloop-prometheus
+    profiles: ['ops']
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      # Needed for the reliability drills: an alert rule is fired by injecting a
+      # condition and then reloaded rather than by restarting the container.
+      - '--web.enable-lifecycle'
+    ports:
+      - '${PROMETHEUS_PORT:-9090}:9090'
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      # The API and the workers run on the host under `pnpm dev`, not in
+      # compose. Without this the scrape targets resolve to the container.
+      - 'host.docker.internal:host-gateway'
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    container_name: serviceloop-alertmanager
+    profiles: ['ops']
+    restart: unless-stopped
+    ports:
+      - '${ALERTMANAGER_PORT:-9093}:9093'
+    volumes:
+      - ./infra/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: serviceloop-grafana
+    profiles: ['ops']
+    restart: unless-stopped
+    environment:
+      # Dev-stack only. The dashboards carry no customer data — see the
+      # metrics module's label policy — but the anonymous-admin setting is
+      # the sort of thing that gets copied into a prod compose file, so it is
+      # scoped to a profile that production never runs.
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      GF_USERS_DEFAULT_THEME: light
+    ports:
+      - '${GRAFANA_PORT:-3002}:3000'
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # Upload scanning (phase 7.1). In the `ops` profile because a developer
+  # sending fixture photographs does not need it, and it pulls a 250 MB
+  # signature database on first start.
+  clamav:
+    image: clamav/clamav:1.4
+    container_name: serviceloop-clamav
+    profiles: ['ops']
+    restart: unless-stopped
+    ports:
+      - '${CLAMAV_PORT:-3310}:3310'
+    healthcheck:
+      # `clamdcheck` returns non-zero until the signature database has loaded,
+      # which takes a minute or two on a cold start. Anything that scans before
+      # then gets UNAVAILABLE, which is exactly what fail-open is for.
+      test: ['CMD', 'clamdcheck.sh']
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
+
 volumes:
   postgres-data:
   redis-data:
   minio-data:
+  prometheus-data:
+  grafana-data:

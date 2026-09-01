@@ -50,6 +50,20 @@
       "when": 1788237901503,
       "tag": "0006_phase6_retention_digest_analytics",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788324301503,
+      "tag": "0007_phase7_privacy_ops",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788410701503,
+      "tag": "0008_phase7_template_registrations",
+      "breakpoints": true
     }
   ]
 }

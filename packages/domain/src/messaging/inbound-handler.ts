@@ -1496,6 +1496,14 @@ function rejectionCopy(rejection: MediaRejection, language: Language): string {
       });
     case 'UNSUPPORTED_TYPE':
       return t(language, 'media.unsupported_type', { type: rejection.contentType ?? 'those' });
+    case 'INFECTED':
+      // Deliberately vague about *what* was found. Naming the signature to a
+      // customer tells whoever sent it which detection they tripped, and the
+      // overwhelmingly likely sender is a person whose own phone is infected
+      // and who needs to be told plainly, not diagnosed at.
+      return t(language, 'media.infected');
+    case 'SCAN_UNAVAILABLE':
+      return t(language, 'media.scan_unavailable');
     case 'EMPTY':
     case 'UNREADABLE':
       return t(language, 'intake.extraction_failed');

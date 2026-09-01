@@ -28,7 +28,7 @@ import {
   ValidationError,
 } from '@serviceloop/shared';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
-import { CurrentStaff, type AuthenticatedStaff } from '../auth/auth.types';
+import { CurrentStaff, Roles, type AuthenticatedStaff } from '../auth/auth.types';
 import { currentTraceId } from '../common/request-context';
 import { ZodBody } from '../common/zod';
 import {
@@ -82,7 +82,17 @@ export class SandboxController {
    * evidence group. Personas come from the database rather than a fixture list
    * so the simulator always reflects the shop as it actually is.
    */
+  /**
+   * Phase 7.1 - RBAC tightening.
+   *
+   * These routes carried no `@Roles()` and were therefore open to every
+   * authenticated role, technicians included. That was never intended: a
+   * technician's job is the vehicle, and this controller reads a simulator that injects messages into live conversation state.
+   * `rbac-matrix.test.ts` now asserts the whole surface, so the omission
+   * cannot come back silently.
+   */
   @Get('personas')
+  @Roles('OWNER', 'ADVISOR')
   async personas(@CurrentStaff() authed: AuthenticatedStaff): Promise<SandboxPersonaList> {
     this.sandbox();
 
@@ -158,6 +168,7 @@ export class SandboxController {
    * chat window and could not be more different to debug.
    */
   @Post('inject')
+  @Roles('OWNER', 'ADVISOR')
   async inject(
     @CurrentStaff() authed: AuthenticatedStaff,
     @ZodBody(SandboxInjectRequestSchema) body: SandboxInjectRequest,
@@ -202,6 +213,7 @@ export class SandboxController {
 
   /** Everything the sandbox has been asked to send, for the simulator's thread. */
   @Get('transcript')
+  @Roles('OWNER', 'ADVISOR')
   transcript(@CurrentStaff() _authed: AuthenticatedStaff): {
     outbound: ReadonlyArray<Record<string, unknown>>;
   } {
@@ -298,6 +310,7 @@ export class SandboxController {
    * DEMO_MODE only, through the same double guard as every other route here.
    */
   @Post('approval-draft')
+  @Roles('OWNER', 'ADVISOR')
   async approvalDraft(
     @CurrentStaff() staff: AuthenticatedStaff,
   ): Promise<{

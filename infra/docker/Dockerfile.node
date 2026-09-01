@@ -1,0 +1,95 @@
+# Multi-stage build for the two Node services (phase 7.7).
+#
+# One Dockerfile, two final targets. They share a lockfile, a build graph and
+# every workspace package, so two files would be two places to forget the same
+# change — and the images differ only in which `main.js` is PID 1.
+#
+#   docker build -f infra/docker/Dockerfile.node --target api     -t serviceloop-api .
+#   docker build -f infra/docker/Dockerfile.node --target workers -t serviceloop-workers .
+#
+# Two targets rather than one with `ARG APP`, and the reason is a real trap: an
+# `ARG` cannot be interpolated into `CMD`, so a parameterised build would need a
+# shell to resolve the entrypoint — and the runtime stage deliberately has no
+# shell. Writing the path out twice is the honest cost of a distroless runtime.
+#
+# The runtime is distroless: no shell, no package manager, no busybox. A
+# container that cannot execute `sh` cannot execute the second stage of most
+# remote-code-execution chains, and the trade — no `docker exec` to poke about
+# in production — is the right one for a service whose debugging story is
+# structured logs and traces.
+
+# ---------------------------------------------------------------- deps stage
+FROM node:22.13.0-bookworm-slim AS deps
+WORKDIR /app
+
+# corepack pins pnpm from `packageManager`, so the image and a developer's
+# machine resolve the same versions from the same lockfile.
+RUN corepack enable
+
+# Only the manifests, so this layer stays cached until a dependency actually
+# changes. Copying the whole tree first would re-run a two-minute install on
+# every source edit.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json apps/api/
+COPY apps/workers/package.json apps/workers/
+COPY apps/console/package.json apps/console/
+COPY packages/shared/package.json packages/shared/
+COPY packages/config/package.json packages/config/
+COPY packages/domain/package.json packages/domain/
+COPY packages/adapters/package.json packages/adapters/
+COPY packages/agent-core/package.json packages/agent-core/
+COPY packages/db/package.json packages/db/
+COPY packages/observability/package.json packages/observability/
+COPY packages/simulator/package.json packages/simulator/
+
+RUN pnpm install --frozen-lockfile
+
+# --------------------------------------------------------------- build stage
+FROM deps AS build
+WORKDIR /app
+COPY . .
+RUN pnpm turbo run build --filter=@serviceloop/api --filter=@serviceloop/workers
+
+# Prune to production dependencies. This drops typescript, vitest,
+# testcontainers and playwright — some hundreds of megabytes of things a
+# running service must not have and an attacker would be pleased to find.
+#
+# The workspace layout is preserved exactly: pnpm's `node_modules` are a tree of
+# relative symlinks, and moving an app out of `apps/<name>/` would break every
+# one of them.
+RUN pnpm install --frozen-lockfile --prod --ignore-scripts
+
+# ------------------------------------------------------------- runtime base
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NODE_OPTIONS="--enable-source-maps"
+
+COPY --from=build --chown=nonroot:nonroot /app/node_modules ./node_modules
+COPY --from=build --chown=nonroot:nonroot /app/packages ./packages
+COPY --from=build --chown=nonroot:nonroot /app/package.json ./package.json
+
+# uid 65532. Set explicitly rather than inherited, so a base-image change
+# cannot quietly hand the process root.
+USER nonroot
+
+# -------------------------------------------------------------------- api
+FROM runtime AS api
+COPY --from=build --chown=nonroot:nonroot /app/apps/api/dist ./apps/api/dist
+COPY --from=build --chown=nonroot:nonroot /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=build --chown=nonroot:nonroot /app/apps/api/package.json ./apps/api/package.json
+
+# Exec form, so Node is PID 1 and receives SIGTERM directly. A shell-form
+# entrypoint would put `sh` at PID 1, the signal would never reach Node, and
+# the graceful-shutdown drain in `main.ts` would never run — the container
+# would just be killed after Cloud Run's grace period with calls in flight.
+CMD ["/app/apps/api/dist/main.js"]
+
+# ---------------------------------------------------------------- workers
+FROM runtime AS workers
+COPY --from=build --chown=nonroot:nonroot /app/apps/workers/dist ./apps/workers/dist
+COPY --from=build --chown=nonroot:nonroot /app/apps/workers/node_modules ./apps/workers/node_modules
+COPY --from=build --chown=nonroot:nonroot /app/apps/workers/package.json ./apps/workers/package.json
+
+CMD ["/app/apps/workers/dist/main.js"]

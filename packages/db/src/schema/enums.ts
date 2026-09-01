@@ -1,5 +1,9 @@
 import {
   ADVISOR_TASK_KINDS,
+  CASCADE_ACTIONS,
+  DATA_REQUEST_KINDS,
+  DATA_REQUEST_STATUSES,
+  DATA_REQUEST_VERIFICATIONS,
   ADVISOR_TASK_STATUSES,
   ALERT_KINDS,
   AGENT_OBJECTIVES,
@@ -69,6 +73,7 @@ import {
   STATUS_SIGNAL_SOURCES,
   STATUS_SIGNAL_TYPES,
   TASK_URGENCIES,
+  TEMPLATE_APPROVAL_STATUSES,
   VOICE_INTENTS,
   WA_TEMPLATE_CATEGORIES,
   WA_TEMPLATE_STATUSES,
@@ -176,3 +181,16 @@ export const reminderKindEnum = pgEnum('reminder_kind', REMINDER_KINDS);
 export const digestKindEnum = pgEnum('digest_kind', DIGEST_KINDS);
 export const alertKindEnum = pgEnum('alert_kind', ALERT_KINDS);
 export const rollupSourceEnum = pgEnum('rollup_source', ROLLUP_SOURCES);
+
+/* Phase 7 — DPDP data-principal workflows. */
+export const dataRequestKindEnum = pgEnum('data_request_kind', DATA_REQUEST_KINDS);
+export const dataRequestStatusEnum = pgEnum('data_request_status', DATA_REQUEST_STATUSES);
+export const dataRequestVerificationEnum = pgEnum(
+  'data_request_verification',
+  DATA_REQUEST_VERIFICATIONS,
+);
+export const cascadeActionEnum = pgEnum('cascade_action', CASCADE_ACTIONS);
+export const templateApprovalStatusEnum = pgEnum(
+  'template_approval_status',
+  TEMPLATE_APPROVAL_STATUSES,
+);

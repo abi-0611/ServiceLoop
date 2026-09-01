@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
   boolean,
   index,
@@ -172,10 +172,18 @@ export const waTemplates = pgTable(
     shopId: uuid('shop_id')
       .notNull()
       .references(() => shops.id, { onDelete: 'cascade' }),
+    /**
+     * The manifest entry this registration satisfies (phase 7.3).
+     *
+     * Nullable, because a shop may legitimately have its own templates that
+     * this product never sends — and treating those as orphans to be cleaned up
+     * would be a product reaching into somebody else's WABA.
+     */
+    templateKey: text('template_key'),
     name: text('name').notNull(),
     language: text('language').notNull(),
     category: waTemplateCategoryEnum('category').notNull(),
-    status: waTemplateStatusEnum('status').notNull().default('PENDING'),
+    status: waTemplateStatusEnum('status').notNull().default('NOT_SUBMITTED'),
     /** Meta's own template id, present once the template has been created. */
     providerTemplateId: text('provider_template_id'),
     headerText: text('header_text'),
@@ -186,7 +194,17 @@ export const waTemplates = pgTable(
     /** How many `{{n}}` placeholders the body carries; validated on every send. */
     variableCount: integer('variable_count').notNull().default(0),
     rejectionReason: text('rejection_reason'),
+    submittedAt: timestamptz('submitted_at'),
     approvedAt: timestamptz('approved_at'),
+    /**
+     * Meta's per-template quality signal (GREEN / YELLOW / RED).
+     *
+     * Surfaced on the ops screen because a template sliding to RED is on its
+     * way to being paused, and a paused template is a conversation that cannot
+     * be opened at all. By the time the status column says PAUSED it is too
+     * late to do anything but rewrite and resubmit.
+     */
+    qualityRating: text('quality_rating'),
     syncedAt: timestamptz('synced_at'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -194,6 +212,9 @@ export const waTemplates = pgTable(
   (table) => [
     uniqueIndex('wa_templates_shop_name_lang_key').on(table.shopId, table.name, table.language),
     index('wa_templates_shop_status_idx').on(table.shopId, table.status),
+    uniqueIndex('wa_templates_shop_key_language')
+      .on(table.shopId, table.templateKey, table.language)
+      .where(sql`template_key is not null`),
   ],
 );
 

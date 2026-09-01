@@ -67,6 +67,16 @@ const en = {
     'That file is {size} — larger than the {limit} we can accept. Could you send a smaller one?',
   'media.unsupported_type':
     'I cannot read {type} files yet. A photo, a voice note or a PDF works well.',
+  /* Phase 7.1 - the upload scanner.
+   *
+   * Neither string names the signature or the scanner. A customer whose phone
+   * has picked something up needs to be told plainly and pointed at a person;
+   * a diagnosis they cannot act on, or the name of the detection they tripped,
+   * helps nobody and helps a deliberate sender quite a lot. */
+  'media.infected':
+    'That file did not pass our security check, so we have not opened or kept it. Could you try a different photo, or call {shopName}?',
+  'media.scan_unavailable':
+    'We could not check that file just now, so we have not kept it. Please try again in a few minutes.',
 
   'error.generic': 'Something went wrong. An advisor at {shopName} will follow up.',
 
@@ -389,6 +399,10 @@ const ta = {
     'அந்த கோப்பு {size} — நாங்கள் ஏற்கக்கூடிய {limit} ஐ விட பெரியது. சிறியதாக அனுப்ப முடியுமா?',
   'media.unsupported_type':
     '{type} கோப்புகளை என்னால் இன்னும் படிக்க முடியாது. புகைப்படம், குரல் குறிப்பு அல்லது PDF நன்றாக வேலை செய்யும்.',
+  'media.infected':
+    'அந்த கோப்பு எங்கள் பாதுகாப்பு சோதனையில் தேறவில்லை. அதனை நாங்கள் திறக்கவும் இல்லை, வைக்கவும் இல்லை. வேறு புகைப்படம் அனுப்புங்கள், அல்லது {shopName} ஐ அழைக்கவும்.',
+  'media.scan_unavailable':
+    'அந்த கோப்பை இப்போது சரிபார்க்க முடியவில்லை, அதனால் வைக்கவில்லை. சில நிமிடங்களில் மீண்டும் முயற்சிக்கவும்.',
 
   'error.generic': 'ஏதோ தவறு நடந்தது. {shopName} இன் ஆலோசகர் உங்களை தொடர்பு கொள்வார்.',
 
@@ -662,6 +676,10 @@ const hi = {
   'media.too_large': 'वह फ़ाइल {size} है — हमारी {limit} सीमा से बड़ी। छोटी भेज सकते हैं?',
   'media.unsupported_type':
     'मैं {type} फ़ाइलें अभी नहीं पढ़ सकता। फ़ोटो, वॉइस नोट या PDF ठीक रहेगा।',
+  'media.infected':
+    'वह फ़ाइल हमारी सुरक्षा जाँच में पास नहीं हुई, इसलिए हमने न उसे खोला न रखा। कोई दूसरी फ़ोटो भेजिए, या {shopName} को फ़ोन कीजिए।',
+  'media.scan_unavailable':
+    'अभी उस फ़ाइल की जाँच नहीं हो पाई, इसलिए हमने उसे रखा नहीं। कुछ मिनट बाद दोबारा कोशिश कीजिए।',
 
   'error.generic': 'कुछ गड़बड़ हो गई। {shopName} का सलाहकार आपसे संपर्क करेगा।',
 

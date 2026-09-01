@@ -20,6 +20,8 @@ const NAV: ReadonlyArray<{ href: string; label: string; demoOnly?: boolean }> = 
   { href: '/sandbox', label: 'Sandbox', demoOnly: true },
   { href: '/softphone', label: 'Softphone', demoOnly: true },
   { href: '/settings/guardrails', label: 'Guardrails' },
+  { href: '/settings/templates', label: 'Templates' },
+  { href: '/settings/privacy', label: 'Privacy' },
 ];
 
 export default async function AppLayout({

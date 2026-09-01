@@ -46,7 +46,15 @@ export interface StoredMediaDescriptor {
 }
 
 export interface MediaRejection {
-  readonly code: 'TOO_LARGE' | 'EMPTY' | 'UNSUPPORTED_TYPE' | 'UNREADABLE';
+  readonly code:
+    | 'TOO_LARGE'
+    | 'EMPTY'
+    | 'UNSUPPORTED_TYPE'
+    | 'UNREADABLE'
+    /** The scanner matched a signature (phase 7.1). Nothing was stored. */
+    | 'INFECTED'
+    /** Fail-closed only: the scanner could not answer, so nothing was stored. */
+    | 'SCAN_UNAVAILABLE';
   /** Already phrased for a customer to read; the handler sends it as-is. */
   readonly reason: string;
   readonly sizeBytes?: number;

@@ -33,7 +33,14 @@ export function verifySignature(
   signatureHeader: string | null,
   appSecret: string,
 ): boolean {
-  if (signatureHeader === null || !signatureHeader.startsWith(SIGNATURE_PREFIX)) return false;
+  // `typeof` rather than `=== null`, because the value comes off an HTTP header
+  // and Express hands back `undefined` for an absent one. A TypeError here
+  // would surface as a 500, and Meta retries 5xx — so a delivery with no
+  // signature at all would be redelivered for days instead of being refused
+  // once. Fail-closed means returning false, not throwing.
+  if (typeof signatureHeader !== 'string' || !signatureHeader.startsWith(SIGNATURE_PREFIX)) {
+    return false;
+  }
 
   const provided = signatureHeader.slice(SIGNATURE_PREFIX.length).trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(provided)) return false;

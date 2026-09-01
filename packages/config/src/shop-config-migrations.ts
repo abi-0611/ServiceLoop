@@ -116,6 +116,19 @@ const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
     ...deepMerge(defaultShopConfig(timezone) as unknown as PlainObject, document),
     configVersion: 6,
   }),
+  /**
+   * v6 -> v7 (phase 7): adds `smsFallback` and `privacy`.
+   *
+   * Additive, and both new blocks default to the restrictive setting: SMS
+   * fallback off, no shop-specific grievance contact, a three-day deletion
+   * grace. A shop that upgrades into this version therefore gains no new way
+   * to message anybody and no shortened deletion window - which is the only
+   * acceptable direction for a migration to move a guardrail (master section 6).
+   */
+  6: (document, timezone) => ({
+    ...deepMerge(defaultShopConfig(timezone) as unknown as PlainObject, document),
+    configVersion: 7,
+  }),
 };
 
 const RUNG_TYPE_BY_LEGACY_CHANNEL: Readonly<Record<string, EscalationRungType>> = {

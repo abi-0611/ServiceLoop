@@ -1,70 +1,28 @@
 import { createServer, type Server } from 'node:http';
-import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
+import {
+  collectRuntimeMetrics,
+  metricsContentType,
+  registry,
+  renderMetrics,
+} from '@serviceloop/observability';
 
 /**
- * Worker metrics (master §2 — observability wired from phase 1).
- * Exposed on `WORKERS_METRICS_PORT` alongside a liveness endpoint.
+ * The worker metrics endpoint.
+ *
+ * The *metrics themselves* moved to `@serviceloop/observability` in phase 7.4,
+ * and that move is the whole point of this file now being nine lines of HTTP.
+ * They lived here, on a registry only this process had, while the alert rules
+ * named them by string — so a rule referencing `serviceloop_dead_lettered_total`
+ * matched nothing when evaluated against the API's registry, and an alert rule
+ * that matches nothing never fires. It looks exactly like a condition that has
+ * never happened.
+ *
+ * One registry, one module, one test comparing it against the rules file.
  */
 
-export const registry = new Registry();
-collectDefaultMetrics({ register: registry, prefix: 'serviceloop_workers_' });
+export * from '@serviceloop/observability';
 
-export const outboxDispatched = new Counter({
-  name: 'serviceloop_outbox_dispatched_total',
-  help: 'Outbox events successfully published to a queue',
-  labelNames: ['queue', 'type'] as const,
-  registers: [registry],
-});
-
-export const outboxFailed = new Counter({
-  name: 'serviceloop_outbox_failed_total',
-  help: 'Outbox events whose publish attempt failed',
-  labelNames: ['type'] as const,
-  registers: [registry],
-});
-
-export const outboxParked = new Counter({
-  name: 'serviceloop_outbox_parked_total',
-  help: 'Outbox events parked as FAILED after exhausting their attempts',
-  labelNames: ['type'] as const,
-  registers: [registry],
-});
-
-export const outboxBacklog = new Gauge({
-  name: 'serviceloop_outbox_backlog',
-  help: 'Outbox rows by status',
-  labelNames: ['status'] as const,
-  registers: [registry],
-});
-
-export const jobsProcessed = new Counter({
-  name: 'serviceloop_queue_jobs_processed_total',
-  help: 'Queue jobs processed',
-  labelNames: ['queue', 'type', 'outcome'] as const,
-  registers: [registry],
-});
-
-export const jobDuration = new Histogram({
-  name: 'serviceloop_queue_job_duration_seconds',
-  help: 'Queue job handling duration',
-  labelNames: ['queue', 'type'] as const,
-  buckets: [0.005, 0.025, 0.1, 0.5, 1, 5, 15],
-  registers: [registry],
-});
-
-export const deadLettered = new Counter({
-  name: 'serviceloop_dead_lettered_total',
-  help: 'Jobs moved to the dead-letter queue',
-  labelNames: ['queue', 'type'] as const,
-  registers: [registry],
-});
-
-export const chainIntegrityFailures = new Counter({
-  name: 'serviceloop_audit_chain_integrity_failures_total',
-  help: 'Audit chain verifications that found a break',
-  labelNames: ['shop'] as const,
-  registers: [registry],
-});
+collectRuntimeMetrics('serviceloop_workers_');
 
 export function startMetricsServer(port: number, isHealthy: () => boolean): Server {
   const server = createServer((request, response) => {
@@ -76,10 +34,9 @@ export function startMetricsServer(port: number, isHealthy: () => boolean): Serv
     }
 
     if (request.url === '/metrics') {
-      registry
-        .metrics()
+      renderMetrics()
         .then((body) => {
-          response.writeHead(200, { 'content-type': registry.contentType });
+          response.writeHead(200, { 'content-type': metricsContentType });
           response.end(body);
         })
         .catch((error: unknown) => {
@@ -96,3 +53,6 @@ export function startMetricsServer(port: number, isHealthy: () => boolean): Serv
   server.listen(port);
   return server;
 }
+
+/** Re-exported so the existing `import { registry }` call sites keep working. */
+export { registry };

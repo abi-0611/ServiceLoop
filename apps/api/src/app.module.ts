@@ -6,6 +6,8 @@ import { RequestContextMiddleware } from './common/request-context';
 import { InfraModule } from './infra/infra.module';
 import { LoopModule } from './loop/loop.module';
 import { MessagingModule } from './messaging/messaging.module';
+import { OpsModule } from './ops/ops.module';
+import { PrivacyModule } from './privacy/privacy.module';
 import { RetentionModule } from './retention/retention.module';
 import { VoiceModule } from './voice/voice.module';
 import { AuditController } from './modules/audit.controller';
@@ -18,7 +20,16 @@ import { JobCardsController } from './modules/jobcards.controller';
  * by default and has to opt out explicitly with `@Public()`.
  */
 @Module({
-  imports: [InfraModule, AuthModule, MessagingModule, LoopModule, VoiceModule, RetentionModule],
+  imports: [
+    InfraModule,
+    AuthModule,
+    MessagingModule,
+    LoopModule,
+    VoiceModule,
+    RetentionModule,
+    PrivacyModule,
+    OpsModule,
+  ],
   controllers: [HealthController, JobCardsController, ConfigController, AuditController],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

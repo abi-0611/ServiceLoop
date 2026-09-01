@@ -36,7 +36,7 @@ import { z } from 'zod';
  * the conservative defaults below — an absent field can only ever become more
  * restrictive, never less.
  */
-export const SHOP_CONFIG_VERSION = 6 as const;
+export const SHOP_CONFIG_VERSION = 7 as const;
 
 export const EscalationRungSchema = z.object({
   /** Minutes after the objective opened (not after the previous rung). */
@@ -695,6 +695,82 @@ export const AgentConfigSchema = z.object({
 });
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+/**
+ * The SMS fallback rung (phase 7.3).
+ *
+ * Per shop rather than per deployment, because the DLT registration is per
+ * shop: a workshop that has registered its own header and its own templates
+ * sends from them, and one that has not gets the platform's - which is legal
+ * but reads as a stranger's name on the customer's handset, so a shop is told
+ * to register its own during onboarding.
+ *
+ * The template map is keyed by the manifest key in `@serviceloop/shared`
+ * (`TEMPLATE_MANIFEST`), which is what makes the coverage check possible: a
+ * template the product needs, with no DLT id registered for it, is a rung that
+ * would fail at the worst moment, and `smsCoverage()` says so before it does.
+ */
+export const SmsFallbackConfigSchema = z.object({
+  /**
+   * Whether this shop is willing to drop to SMS at all.
+   *
+   * Off by default. SMS costs real money per message, carries no buttons - so
+   * every one-tap action degrades to a phone number - and until a shop has
+   * registered its templates it cannot legally carry anything. A shop that
+   * turns it on has been walked through those three facts by the onboarding
+   * manual.
+   */
+  enabled: z.boolean(),
+  /** Registered header. Null means "use the platform's". */
+  senderId: z.string().min(3).max(11).nullable(),
+  /** Principal entity id from the DLT registry, when the shop has its own. */
+  dltEntityId: z.string().min(1).nullable(),
+  /**
+   * Manifest template key to registered DLT content-template id. A key that is
+   * absent is a message that cannot fall back, and the gate raises the advisor
+   * task instead of sending something the operator would drop.
+   */
+  dltTemplateIds: z.record(z.string().min(1), z.string().min(1)),
+  /**
+   * Purposes SMS may carry. MARKETING is excluded by default and the schema
+   * does not stop a shop adding it - but the OutboundGate's consent check runs
+   * first regardless, so this narrows rather than widens.
+   */
+  purposes: z.array(z.enum(['SERVICE', 'MARKETING'])).min(1),
+});
+export type SmsFallbackConfig = z.infer<typeof SmsFallbackConfigSchema>;
+
+/**
+ * DPDP data-principal settings (phase 7.2).
+ *
+ * The grievance contact is a statutory publication requirement, and it is
+ * per-shop because the data fiduciary the customer dealt with is the workshop,
+ * not the platform. A null falls back to the deployment-wide contact in
+ * `DPDP_GRIEVANCE_*`, which is the platform accepting the duty on the shop's
+ * behalf until the shop supplies its own - stated plainly in the notice.
+ */
+export const PrivacyConfigSchema = z.object({
+  grievanceContactName: z.string().min(1).nullable(),
+  grievanceContactEmail: z.string().email().nullable(),
+  grievanceContactPhone: z.string().min(1).nullable(),
+  /**
+   * Days between a verified deletion request and the cascade running.
+   *
+   * Not zero, and the reason is a real failure mode rather than caution: a
+   * deletion is irreversible and a person who taps it on the wrong customer has
+   * no undo. The window is short enough to satisfy the Act's "reasonable time"
+   * and long enough for an owner to notice. It is skippable by an OWNER who
+   * confirms in writing, which is audited.
+   */
+  deletionGraceDays: z.number().int().min(0).max(30),
+  /**
+   * Years a *pseudonymised* invoice survives a deletion request, for GST and
+   * Income Tax record-keeping. The PII is destroyed either way; what is retained
+   * is the amount, the tax and a pseudonym.
+   */
+  invoiceRetentionYears: z.number().int().min(1).max(30),
+});
+export type PrivacyConfig = z.infer<typeof PrivacyConfigSchema>;
+
 export const ShopConfigSchema = z.object({
   configVersion: z.literal(SHOP_CONFIG_VERSION),
   autonomy: AutonomyConfigSchema,
@@ -728,6 +804,8 @@ export const ShopConfigSchema = z.object({
   digest: DigestConfigSchema,
   alerts: AlertsConfigSchema,
   analytics: AnalyticsConfigSchema,
+  smsFallback: SmsFallbackConfigSchema,
+  privacy: PrivacyConfigSchema,
 });
 
 export type ShopConfig = z.infer<typeof ShopConfigSchema>;
@@ -847,6 +925,21 @@ export function defaultShopConfig(timezone = 'Asia/Kolkata'): ShopConfig {
       whatsappPhoneNumberId: null,
       templates: { reengagement: null, jobCardOpened: null, readyForDelivery: null },
       defaultOutboundLanguage: 'en',
+    },
+    smsFallback: {
+      // Off until a shop has a DLT registration. See the schema comment.
+      enabled: false,
+      senderId: null,
+      dltEntityId: null,
+      dltTemplateIds: {},
+      purposes: ['SERVICE'],
+    },
+    privacy: {
+      grievanceContactName: null,
+      grievanceContactEmail: null,
+      grievanceContactPhone: null,
+      deletionGraceDays: 3,
+      invoiceRetentionYears: 8,
     },
     intake: {
       // The phase-2 flagship: anything the extractor is less than 80% sure of

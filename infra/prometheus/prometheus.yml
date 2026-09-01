@@ -1,0 +1,43 @@
+# Prometheus for the development stack (phase 7.4).
+#
+# Two scrape targets, because the two processes fail differently: the API is a
+# request/response service whose symptom is latency, and the workers are a
+# pipeline whose symptom is a backlog. Alerting on one and not the other is how
+# a queue silently stops draining while every dashboard stays green.
+#
+# In production this file is not used — Cloud Monitoring scrapes the same
+# `/metrics` endpoints and the same rules are expressed as Cloud Monitoring
+# alerting policies (see `docs/runbooks/alerts.md`). The rule *file* is shared,
+# so the two cannot drift in what they alert on, only in how they notify.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: local
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+  - job_name: serviceloop-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:3001']
+        labels:
+          component: api
+
+  - job_name: serviceloop-workers
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:9101']
+        labels:
+          component: workers
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

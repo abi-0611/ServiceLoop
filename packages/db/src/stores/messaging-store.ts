@@ -330,6 +330,7 @@ export class PgMessageStore implements MessageStore<Tx> {
       readonly providerConversationId: string | null;
       readonly conversationCategory: ConversationCategory | null;
       readonly sentAt: Date;
+      readonly channel?: ChannelType;
     },
   ): Promise<void> {
     await tx
@@ -340,6 +341,10 @@ export class PgMessageStore implements MessageStore<Tx> {
         providerConversationId: input.providerConversationId,
         conversationCategory: input.conversationCategory,
         sentAt: input.sentAt,
+        // Only written on a fallback. The row was inserted with the channel the
+        // gate's sender declared; rewriting it with the same value on every
+        // send would be a no-op update on the hottest write in the system.
+        ...(input.channel === undefined ? {} : { channel: input.channel }),
       })
       .where(eq(messages.id, input.messageId));
   }

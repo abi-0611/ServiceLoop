@@ -57,6 +57,8 @@ describe('audit chain', () => {
     expect(verifyAuditChain(chain)).toEqual({
       valid: true,
       entriesChecked: 25,
+      // Phase 7.2 added this: an intact chain has redacted nothing.
+      redactedEntries: 0,
       brokenAtIndex: null,
       brokenEventId: null,
       reason: null,
@@ -128,5 +130,71 @@ describe('audit chain', () => {
     const result = verifyAuditChain(tampered);
     expect(result.valid).toBe(false);
     expect(result.brokenAtIndex).toBe(0);
+  });
+});
+
+/**
+ * Erasure and the hash chain, both true at once (phase 7.2).
+ *
+ * A DPDP deletion rewrites the payload of every audit row about the erased
+ * customer and deliberately leaves the stored hash alone. These are the
+ * properties that combination has to keep, and the last one is the reason the
+ * flag is not simply "skip this row".
+ */
+describe('redacted entries', () => {
+  it('reports an intact chain with a redacted payload as valid, and says how many', () => {
+    const chain = buildChain(5);
+    const target = chain[2] as (typeof chain)[number];
+    const redacted = chain.map((entry, index) =>
+      index === 2
+        ? { ...entry, payload: { subjectPseudonym: 'sub_abc' }, payloadRedacted: true }
+        : entry,
+    );
+
+    const result = verifyAuditChain(redacted);
+
+    expect(result.valid).toBe(true);
+    expect(result.redactedEntries).toBe(1);
+    expect(result.entriesChecked).toBe(5);
+    // The row keeps its original hash, so everything after it still links.
+    expect(target.hash).toBe(redacted[2]?.hash);
+  });
+
+  it('still reports tampering when the payload changed and the flag is absent', () => {
+    const chain = buildChain(5);
+    const tampered = chain.map((entry, index) =>
+      index === 2 ? { ...entry, payload: { rewritten: true } } : entry,
+    );
+
+    const result = verifyAuditChain(tampered);
+
+    expect(result.valid).toBe(false);
+    expect(result.brokenAtIndex).toBe(2);
+    expect(result.reason).toContain('Content tampered');
+  });
+
+  it('still breaks when a redacted entry is deleted from the chain', () => {
+    // The property that keeps the flag from being an escape hatch: it permits
+    // a payload to differ from its hash and nothing else. Removing the row
+    // breaks the sequence, and no flag can hide that.
+    const chain = buildChain(5).map((entry) => ({ ...entry, payloadRedacted: true }));
+    const withHole = [...chain.slice(0, 2), ...chain.slice(3)];
+
+    const result = verifyAuditChain(withHole);
+
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('Sequence gap');
+  });
+
+  it('still breaks when a redacted entry’s link is altered', () => {
+    const chain = buildChain(5).map((entry) => ({ ...entry, payloadRedacted: true }));
+    const relinked = chain.map((entry, index) =>
+      index === 3 ? { ...entry, prevHash: '0'.repeat(64) } : entry,
+    );
+
+    const result = verifyAuditChain(relinked);
+
+    expect(result.valid).toBe(false);
+    expect(result.reason).toContain('Broken link');
   });
 });
