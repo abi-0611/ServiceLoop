@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fillField } from './helpers';
 
 /** Guardrail editing, as the owner. */
 
@@ -11,7 +12,7 @@ test('lets an owner edit a guardrail, and the change persists', async ({ page })
   const original = await start.inputValue();
   const next = original === '21:00' ? '21:45' : '21:00';
 
-  await start.fill(next);
+  await fillField(start, next);
   await page.getByRole('button', { name: 'Save guardrails' }).click();
   await expect(page.getByTestId('guardrail-message')).toContainText('Saved and audited');
 
@@ -19,7 +20,7 @@ test('lets an owner edit a guardrail, and the change persists', async ({ page })
   await expect(page.getByLabel('Start')).toHaveValue(next);
 
   // Restore so repeated runs are idempotent.
-  await page.getByLabel('Start').fill(original);
+  await fillField(page.getByLabel('Start'), original);
   await page.getByRole('button', { name: 'Save guardrails' }).click();
   await expect(page.getByTestId('guardrail-message')).toContainText('Saved and audited');
 });
@@ -27,7 +28,7 @@ test('lets an owner edit a guardrail, and the change persists', async ({ page })
 test('rejects an out-of-range guardrail with a field-level error', async ({ page }) => {
   await page.goto('/settings/guardrails');
 
-  await page.getByLabel('Price floor (% of list)').fill('250');
+  await fillField(page.getByLabel('Price floor (% of list)'), '250');
   await page.getByRole('button', { name: 'Save guardrails' }).click();
 
   await expect(page.getByTestId('guardrail-errors')).toContainText('pricing.priceFloorPercent');

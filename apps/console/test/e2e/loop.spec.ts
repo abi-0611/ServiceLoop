@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fillField } from './helpers';
 
 /**
  * The phase-4 console surfaces: the ETA history, the confirm queue, the
@@ -56,7 +57,7 @@ test.describe('the gate', () => {
 
     await expect(page.getByRole('heading', { name: 'Gate' })).toBeVisible();
 
-    await page.getByTestId('gate-code').fill('ZZZZZZ');
+    await fillField(page.getByTestId('gate-code'), 'ZZZZZZ');
     await page.getByTestId('gate-verify').click();
 
     const verdict = page.getByTestId('gate-verdict');

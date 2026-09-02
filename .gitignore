@@ -16,7 +16,15 @@ playwright-report/
 test-results/
 .pnpm-store/
 *.zip
-test/e2e/.auth/
+# Playwright's saved sessions. The pattern needs the `**/`: a rule with a slash
+# in the middle is anchored to this file's directory, so the un-prefixed form
+# matched nothing and two real JWTs were tracked in `apps/console/`.
+**/test/e2e/.auth/
+
+# Next's standalone bundle, dropped here by a Windows build whose tracing root
+# resolves to `/D:/…`. Harmless output, but it is build product and was once
+# committed by accident.
+apps/console/ServiceLoop/
 
 # Generated OCR eval fixtures. `pnpm eval:ocr` renders them deterministically
 # from the HTML templates, and manifest.json records the template hash each

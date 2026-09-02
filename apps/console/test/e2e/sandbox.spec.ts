@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { fillField } from './helpers';
 
 /**
  * Picks a persona and returns the name the inbox will show for their thread.
@@ -38,7 +39,7 @@ test.describe('sandbox simulator', () => {
 
     const customer = await actAs(page, '👤');
     const message = `Is my car ready? ${Date.now()}`;
-    await page.getByTestId('simulator-input').fill(message);
+    await fillField(page.getByTestId('simulator-input'), message);
     await page.getByTestId('simulator-send').click();
 
     // The trace is the simulator's reason for existing: it says where the
@@ -75,7 +76,7 @@ test.describe('sandbox simulator', () => {
 
     await actAs(page, '👤');
     const inbound = `Any update? ${Date.now()}`;
-    await page.getByTestId('simulator-input').fill(inbound);
+    await fillField(page.getByTestId('simulator-input'), inbound);
     await page.getByTestId('simulator-send').click();
     await expect(page.getByTestId('trace-panel')).toContainText('router');
 
@@ -86,7 +87,7 @@ test.describe('sandbox simulator', () => {
     await expect(page.getByTestId('thread')).toContainText(inbound);
 
     const reply = `Ready by 5pm. ${Date.now()}`;
-    await page.getByTestId('reply-input').fill(reply);
+    await fillField(page.getByTestId('reply-input'), reply);
     await page.getByTestId('reply-send').click();
 
     // Whatever the gate decided is shown: sent messages appear in the thread,
@@ -149,11 +150,11 @@ test.describe('digital job card', () => {
     // sharing one name, and the simulator's persona list — and therefore the
     // inbox lookup in the tests above — becomes ambiguous.
     const suffix = String(Date.now()).slice(-4);
-    await page.getByTestId('field-customerName').fill(`Playwright Customer ${suffix}`);
-    await page.getByTestId('field-phone').fill(`98${String(Date.now()).slice(-8)}`);
-    await page.getByTestId('field-registration').fill(`TN09PW${suffix}`);
-    await page.getByTestId('field-complaint-0').fill('Brake noise on the front left');
-    await page.getByTestId('field-line-0').fill('Front brake pad set');
+    await fillField(page.getByTestId('field-customerName'), `Playwright Customer ${suffix}`);
+    await fillField(page.getByTestId('field-phone'), `98${String(Date.now()).slice(-8)}`);
+    await fillField(page.getByTestId('field-registration'), `TN09PW${suffix}`);
+    await fillField(page.getByTestId('field-complaint-0'), 'Brake noise on the front left');
+    await fillField(page.getByTestId('field-line-0'), 'Front brake pad set');
 
     await page.getByTestId('create-job-card').click();
 

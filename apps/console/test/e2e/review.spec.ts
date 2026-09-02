@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { fillField } from './helpers';
 
 /**
  * The L0 shadow-mode round trip, through the browser (phase 3.9).
@@ -72,7 +73,7 @@ test.describe('review queue — L0 shadow mode', () => {
     // several customers, so a fixed phrase would match somebody else's thread.
     const signature = `Anna, one moment ${Date.now()}`;
     const edited = `${signature} — ${original.trim()} Shall we go ahead?`;
-    await editor.fill(edited);
+    await fillField(editor, edited);
     await card.getByTestId('review-send-edited').click();
 
     // Decided candidates leave the queue.
@@ -112,7 +113,10 @@ test.describe('review queue — L0 shadow mode', () => {
     const confirm = card.getByTestId('review-confirm-reject');
     await expect(confirm).toBeDisabled();
 
-    await card.getByTestId('review-reject-reason').fill('It quoted a price the estimate does not carry');
+    await fillField(
+      card.getByTestId('review-reject-reason'),
+      'It quoted a price the estimate does not carry',
+    );
     await expect(confirm).toBeEnabled();
     await confirm.click();
 

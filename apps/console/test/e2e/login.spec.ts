@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { DEMO_PHONES, signIn } from './helpers';
+import { DEMO_PHONES, fillField, signIn, submitPhone } from './helpers';
 
 /** The unauthenticated surface: sign-in and the auth boundary. */
 
@@ -18,15 +18,13 @@ test('redirects an unauthenticated visitor to login', async ({ page }) => {
 
 test('refuses a number that belongs to no shop, without saying so', async ({ page }) => {
   await page.goto('/login');
-  await page.getByLabel('Mobile number').fill('9812345678');
-  await page.getByRole('button', { name: 'Send code' }).click();
+  await submitPhone(page, '9812345678');
 
   // The prompt advances identically for an unknown number — no enumeration —
   // but no code is shown, because none was sent.
-  await expect(page.getByLabel('6-digit code')).toBeVisible();
   await expect(page.getByTestId('demo-code')).toHaveCount(0);
 
-  await page.getByLabel('6-digit code').fill('000000');
+  await fillField(page.getByLabel('6-digit code'), '000000');
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByRole('alert')).toBeVisible();
 });
