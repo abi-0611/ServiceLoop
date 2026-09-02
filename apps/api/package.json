@@ -27,7 +27,7 @@
     "@serviceloop/shared": "workspace:*",
     "bullmq": "^5.34.5",
     "cookie-parser": "^1.4.7",
-    "drizzle-orm": "^0.38.3",
+    "drizzle-orm": "^0.45.2",
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
     "ioredis": "^5.4.2",

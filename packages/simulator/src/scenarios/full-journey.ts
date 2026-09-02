@@ -516,7 +516,6 @@ async function main(): Promise<void> {
 
   /* -------------------------------------------------------------- scenario */
 
-  let originalConfig: unknown = null;
   let registration = '';
   let cardImage: Buffer = Buffer.alloc(0);
   let draftId = '';
@@ -547,11 +546,6 @@ async function main(): Promise<void> {
 
   runner
     .step('The shop is configured for the whole loop', async () => {
-      const stored = await db.execute<{ config: unknown }>(sql`
-        select config from shop_config where shop_id = ${DEMO_SHOP_ID}
-      `);
-      originalConfig = stored.rows[0]?.config ?? null;
-
       const current = await uow.transaction(async (tx) => {
         const row = await configStore.load(tx, DEMO_SHOP_ID);
         const timezone =
@@ -1475,12 +1469,12 @@ async function main(): Promise<void> {
     })
 
     .onTeardown(async () => {
-      if (originalConfig !== null) {
-        await db.execute(sql`
-          update shop_config set config = ${JSON.stringify(originalConfig)}::jsonb
-           where shop_id = ${DEMO_SHOP_ID}
-        `);
-      }
+      // The configuration is deliberately not restored, for the same reason it
+      // is not restored in `phase6-demo.ts`: this journey widens
+      // `analytics.recoveryCohortDays` to 180 and then folds a day under it.
+      // The fold's lookback is derived from that window, so putting 90 back
+      // leaves a stored rollup that no re-fold can reproduce — and reproducing
+      // it is exactly what `pnpm metrics:recompute` exists to prove.
       await redis.quit();
       await database.close();
     });

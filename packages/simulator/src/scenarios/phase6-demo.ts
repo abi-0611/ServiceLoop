@@ -238,7 +238,6 @@ async function main(): Promise<void> {
 
   /* ------------------------------------------------------------- scenario */
 
-  let originalConfig: unknown = null;
   let happy = emptyCustomer();
   let unhappy = emptyCustomer();
   let ownerStaffId = '';
@@ -257,11 +256,6 @@ async function main(): Promise<void> {
 
   runner
     .step('The shop switches retention, feedback and the digest on', async () => {
-      const stored = await db.execute<{ config: unknown }>(sql`
-        select config from shop_config where shop_id = ${DEMO_SHOP_ID}
-      `);
-      originalConfig = stored.rows[0]?.config ?? null;
-
       // Read, migrated, patched, written back whole. A seeded shop's document
       // predates the phase-6 sections entirely, and merging into a key that is
       // not there produces SQL NULL — which is how a demo deletes a shop's
@@ -761,14 +755,21 @@ async function main(): Promise<void> {
     })
 
     .onTeardown(async () => {
-      // The shop's own configuration is restored: a demo that left retention
-      // switched on would change what the *next* demo proves.
-      if (originalConfig !== null) {
-        await db.execute(sql`
-          update shop_config set config = ${JSON.stringify(originalConfig)}::jsonb
-          where shop_id = ${DEMO_SHOP_ID}
-        `);
-      }
+      // The configuration is deliberately *not* restored, and that is the whole
+      // point of this comment.
+      //
+      // This demo widens `analytics.recoveryCohortDays` to 180 and then folds a
+      // quarter of shop-days under it, leaving 95 rollups behind. Those rollups
+      // are only reproducible under the config that produced them: the fold's
+      // lookback is `max(recoveryCohortDays, repeatVisitWindowDays) + 1`, so
+      // putting 90 back changes the event window for every day and every stored
+      // number with it. `pnpm metrics:recompute` — the audit story for
+      // "₹ recovered", and a required check — would then report all 95 days as
+      // changed on a database nobody had touched.
+      //
+      // Restoring the switch while keeping the numbers it produced is the
+      // inconsistent state, not leaving it on. A shop that ran this demo *did*
+      // turn retention on, and the rollups are the evidence.
       await redis.quit();
       await database.close();
     });

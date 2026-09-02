@@ -63,6 +63,40 @@ beforeEach(async () => {
   await truncateAll(db);
 });
 
+/**
+ * Asserts that `work` is refused by the database, and by *which* guardrail.
+ *
+ * The pattern matters as much as the rejection. `rejects.toThrow()` bare would
+ * pass on a typo'd column name too, and then the day somebody drops the
+ * append-only trigger the test still goes green.
+ *
+ * Walks the `cause` chain rather than reading `error.message`, because drizzle
+ * wraps the driver error in its own `Failed query: ...` and the constraint name
+ * — the whole point of the assertion — is on the cause. Which layer holds the
+ * text is a detail of the ORM version; that it is *somewhere* in the chain is
+ * the stable property, so this matches on the chain.
+ */
+async function rejectedBy(work: Promise<unknown>, pattern: RegExp): Promise<void> {
+  let thrown: unknown;
+  try {
+    await work;
+  } catch (error) {
+    thrown = error;
+  }
+
+  expect(thrown, `expected a rejection matching ${pattern.source}`).toBeDefined();
+
+  const chain: string[] = [];
+  for (let error = thrown; error !== undefined && error !== null; ) {
+    chain.push(error instanceof Error ? error.message : String(error));
+    error = error instanceof Error ? (error.cause as unknown) : undefined;
+  }
+
+  expect(chain.join(' | '), `no link in the error chain matched ${pattern.source}`).toMatch(
+    pattern,
+  );
+}
+
 const SHOP_ID = '01930000-0000-7000-8000-00000000aa01';
 
 async function seedMinimum(): Promise<{
@@ -521,14 +555,15 @@ describe('schema smoke', () => {
 
   it('enforces the per-shop unique registration index', async () => {
     const base = await seedMinimum();
-    await expect(
+    await rejectedBy(
       db.insert(vehicles).values({
         shopId: SHOP_ID,
         customerId: base.customerId,
         registrationRaw: 'TN-09-BX-1234',
         registrationNormalised: 'TN09BX1234',
       }),
-    ).rejects.toThrow(/vehicles_shop_registration_key/);
+      /vehicles_shop_registration_key/,
+    );
   });
 
   it('allows the same registration in a different shop', async () => {
@@ -622,11 +657,13 @@ describe('database-enforced guardrails', () => {
       traceId: 'test',
     });
 
-    await expect(
+    await rejectedBy(
       db.update(auditEvents).set({ action: 'tampered' }).where(eq(auditEvents.shopId, SHOP_ID)),
-    ).rejects.toThrow(/append-only/);
+      /append-only/,
+    );
 
-    await expect(db.delete(auditEvents).where(eq(auditEvents.shopId, SHOP_ID))).rejects.toThrow(
+    await rejectedBy(
+      db.delete(auditEvents).where(eq(auditEvents.shopId, SHOP_ID)),
       /append-only/,
     );
   });
@@ -655,13 +692,12 @@ describe('database-enforced guardrails', () => {
       .set({ status: 'ACCEPTED', acceptedAt: new Date() })
       .where(eq(estimates.id, base.estimateId));
 
-    await expect(
+    await rejectedBy(
       db.update(estimateLines).set({ unitPricePaise: 1 }).where(eq(estimateLines.id, lineId)),
-    ).rejects.toThrow(/immutable/);
-    await expect(db.delete(estimateLines).where(eq(estimateLines.id, lineId))).rejects.toThrow(
       /immutable/,
     );
-    await expect(
+    await rejectedBy(db.delete(estimateLines).where(eq(estimateLines.id, lineId)), /immutable/);
+    await rejectedBy(
       db.insert(estimateLines).values({
         shopId: SHOP_ID,
         estimateId: base.estimateId,
@@ -671,7 +707,8 @@ describe('database-enforced guardrails', () => {
         unitPricePaise: 100000,
         lineTotalPaise: 100000,
       }),
-    ).rejects.toThrow(/immutable/);
+      /immutable/,
+    );
   });
 
   it('refuses to delete a shop while its audit chain exists', async () => {
@@ -695,7 +732,7 @@ describe('database-enforced guardrails', () => {
 
   it('rejects non-positive quantities and negative money', async () => {
     const base = await seedMinimum();
-    await expect(
+    await rejectedBy(
       db.insert(estimateLines).values({
         shopId: SHOP_ID,
         estimateId: base.estimateId,
@@ -705,6 +742,7 @@ describe('database-enforced guardrails', () => {
         unitPricePaise: 1000,
         lineTotalPaise: 0,
       }),
-    ).rejects.toThrow(/estimate_lines_quantity_positive/);
+      /estimate_lines_quantity_positive/,
+    );
   });
 });

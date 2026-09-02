@@ -5,7 +5,7 @@ import { registerInstrumentations } from '@opentelemetry/instrumentation';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { IORedisInstrumentation } from '@opentelemetry/instrumentation-ioredis';
 import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import {
   BatchSpanProcessor,
   ParentBasedSampler,
@@ -56,7 +56,11 @@ export function startTracing(options: TracingOptions): void {
   const serviceName = env.OTEL_SERVICE_NAME ?? `${env.SERVICE_NAME}-${options.component}`;
 
   provider = new NodeTracerProvider({
-    resource: new Resource({
+    // `resourceFromAttributes` rather than `new Resource`: the SDK's 2.x line
+    // made `Resource` a type and moved construction behind a factory, so that
+    // an async-resolving resource and a literal one are the same shape to the
+    // provider.
+    resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: serviceName,
       [ATTR_SERVICE_VERSION]: env.APP_VERSION,
       'deployment.environment.name': env.DEPLOY_ENV,

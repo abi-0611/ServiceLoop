@@ -91,6 +91,16 @@ beforeAll(async () => {
   // would be ten seconds of CI. Nothing under test changes.
   process.env['VOICE_LOOPBACK_PLAYBACK_SPEED'] = '25';
   process.env['OTP_RESEND_COOLDOWN_SECONDS'] = '0';
+  // The limiters stay *on* — the middleware, the Redis store and the RFC 9457
+  // refusal shape are all part of what this suite covers — but their ceilings
+  // are production ceilings, and a suite is not production traffic. Every test
+  // below signs in, and the auth limiter allows ten attempts a minute per
+  // address: at the eleventh `signIn` the suite starts asserting against 429
+  // instead of against the product. Raised rather than disabled, so a route
+  // that lost its limiter still fails `rbac-matrix`.
+  process.env['RATE_LIMIT_AUTH_MAX'] = '10000';
+  process.env['RATE_LIMIT_GLOBAL_MAX'] = '100000';
+  process.env['RATE_LIMIT_SHOP_MAX'] = '100000';
   resetEnvCache();
 
   handle = createDatabase(getEnv());

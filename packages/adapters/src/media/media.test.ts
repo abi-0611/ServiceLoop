@@ -1,4 +1,7 @@
 import sharp from 'sharp';
+// sharp 0.35 stopped exposing its namespace types through the default import;
+// the type comes in by name now, the value still by default.
+import type { Sharp } from 'sharp';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   decodeWav,
@@ -40,7 +43,7 @@ let webp: Buffer;
 let rotatedJpeg: Buffer;
 let wav: Buffer;
 
-async function solid(width: number, height: number): Promise<sharp.Sharp> {
+async function solid(width: number, height: number): Promise<Sharp> {
   return sharp({
     create: {
       width,
