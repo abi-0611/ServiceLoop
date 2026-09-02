@@ -565,7 +565,26 @@ async function main(): Promise<void> {
               status: 'L2_CONVERSATIONAL',
               delivery: 'L2_CONVERSATIONAL',
               retention: 'L2_CONVERSATIONAL',
+              // The post-call WhatsApp summary is sent *as* the voice flow, so a
+              // shop left at L0 here would take the decision on the phone and
+              // then hold its own confirmation for an advisor to approve.
+              voice: 'L2_CONVERSATIONAL',
             },
+            /**
+             * The telephone, on — inbound only.
+             *
+             * Step 12 is a customer who *rings the shop*, and the call gate
+             * checks two separate flags for that: `enabled` for voice at all,
+             * and `inboundEnabled` for answering. Without them the journey stops
+             * eleven steps in with "This shop has not switched voice on", which
+             * is the gate working exactly as designed on a shop nobody had
+             * configured.
+             *
+             * `outboundEnabled` is deliberately left off. This journey never
+             * places a call, and switching on a capability the scenario does not
+             * exercise would have the demo assert something it never proves.
+             */
+            voice: { ...current.voice, enabled: true, inboundEnabled: true },
             // A ceiling the journey's concession fits inside, and a floor it
             // does not go below. The objection step asserts both halves.
             pricing: { priceFloorPercent: 85, discountCeilingPercent: 10 },
