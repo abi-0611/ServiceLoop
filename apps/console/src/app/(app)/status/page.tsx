@@ -1,5 +1,6 @@
 import { PendingStatusSignalListSchema } from '@serviceloop/shared';
-import { Badge, EmptyState } from '@/components/ui/primitives';
+import { Activity } from 'lucide-react';
+import { EmptyState, PageHeader } from '@/components/ui/primitives';
 import { StatusSignalCard } from '@/components/status-signal-card';
 import { serverApiFetch } from '@/lib/api';
 
@@ -23,29 +24,40 @@ export default async function StatusPage(): Promise<React.JSX.Element> {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Status signals</h1>
-          <p className="text-sm text-muted-foreground">
-            Technician notes that need one tap before they move a job card.
-          </p>
-        </div>
-        {queue.signals.length > 0 && (
-          <Badge tone="warn" data-testid="status-pending-count">
-            {queue.signals.length} waiting
-          </Badge>
-        )}
-      </div>
+      <PageHeader
+        eyebrow="Workshop"
+        title="Status signals"
+        description="Technician notes that need one tap before they move a job card."
+        actions={
+          queue.signals.length > 0 ? (
+            <span
+              data-testid="status-pending-count"
+              className="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 shadow-xs dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-300"
+            >
+              <span className="relative flex size-2">
+                <span className="ping-dot absolute inset-0 rounded-full opacity-70" />
+                <span className="relative size-2 rounded-full bg-current" />
+              </span>
+              {queue.signals.length} waiting
+            </span>
+          ) : undefined
+        }
+      />
 
       {queue.signals.length === 0 ? (
         <EmptyState
+          icon={<Activity />}
           title="Nothing waiting"
           description="Notes the parser is sure about apply themselves. Anything it is unsure of — a fragment, a plate it did not hear, two cars in the running — waits here instead of guessing."
         />
       ) : (
         <ul data-testid="status-queue" className="space-y-4">
-          {queue.signals.map((signal) => (
-            <li key={signal.signalId}>
+          {queue.signals.map((signal, index) => (
+            <li
+              key={signal.signalId}
+              className="animate-enter"
+              style={{ '--i': index } as React.CSSProperties}
+            >
               <StatusSignalCard signal={signal} />
             </li>
           ))}

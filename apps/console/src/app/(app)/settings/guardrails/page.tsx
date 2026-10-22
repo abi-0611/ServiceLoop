@@ -1,3 +1,4 @@
+import { PageHeader } from '@/components/ui/primitives';
 import { ShopConfigSchema } from '@serviceloop/config';
 import { z } from 'zod';
 import { GuardrailForm } from '@/components/guardrail-form';
@@ -21,13 +22,16 @@ export default async function GuardrailsPage(): Promise<React.JSX.Element> {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Guardrails</h1>
-        <p className="text-sm text-muted-foreground">
-          Autonomy, pricing limits and quiet hours. Every change is validated as a whole document
-          and recorded in the audit log with who made it.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Settings"
+        title="Guardrails"
+        description={
+          <>
+            Autonomy, pricing limits and quiet hours. Every change is validated as a whole document
+            and recorded in the audit log with who made it.
+          </>
+        }
+      />
 
       <GuardrailForm config={config} editable={editable} />
     </div>

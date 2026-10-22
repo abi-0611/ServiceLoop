@@ -83,7 +83,7 @@ export function DraftReview({ initial }: { initial: IntakeDraftDetail }): React.
 
   if (result !== null) {
     return (
-      <Card className="space-y-3 border-emerald-300 bg-emerald-50 p-4">
+      <Card className="space-y-3 border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-400/35 dark:bg-emerald-500/10">
         <p className="text-sm font-semibold text-emerald-900" data-testid="confirm-result">
           Job card {result.code} created.
         </p>
@@ -101,7 +101,7 @@ export function DraftReview({ initial }: { initial: IntakeDraftDetail }): React.
   return (
     <div className="space-y-4">
       {uncertain.length > 0 && (
-        <Card className="border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        <Card className="border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200">
           {uncertain.length} field{uncertain.length === 1 ? '' : 's'} below the shop&apos;s{' '}
           {Math.round(draft.confirmationThreshold * 100)}% confidence threshold. Check these first.
         </Card>
@@ -146,7 +146,7 @@ export function DraftReview({ initial }: { initial: IntakeDraftDetail }): React.
             ) : (
               <>
                 <span
-                  className={cn('flex-1 text-sm', field.uncertain && 'font-medium text-amber-900')}
+                  className={cn('flex-1 text-sm', field.uncertain && 'font-medium text-amber-900 dark:text-amber-300')}
                   data-testid={`value-${field.path}`}
                 >
                   {field.uncertain && <span aria-label="uncertain">⚠ </span>}

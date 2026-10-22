@@ -1,4 +1,6 @@
+import { ScanLine } from 'lucide-react';
 import { GateVerify } from '@/components/gate-verify';
+import { PageHeader } from '@/components/ui/primitives';
 
 /**
  * The gate (phase 4.10).
@@ -24,18 +26,26 @@ export default async function GatePage({
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Gate</h1>
-        <p className="text-sm text-muted-foreground">
-          Scan the customer&rsquo;s QR, or type the six characters from their message.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Barrier"
+        title={
+          <span className="flex items-center gap-3">
+            <span
+              aria-hidden="true"
+              className="flex size-9 items-center justify-center rounded-md bg-primary-soft text-primary ring-1 ring-inset ring-primary/15"
+            >
+              <ScanLine className="size-5" />
+            </span>
+            Gate
+          </span>
+        }
+        description="Scan the customer's QR, or type the six characters from their message."
+      />
 
       <GateVerify initialToken={token} />
 
       <p className="text-xs text-muted-foreground">
-        Every check is recorded — the pass, the result, and who was signed in.
-        A pass works once.
+        Every check is recorded — the pass, the result, and who was signed in. A pass works once.
       </p>
     </div>
   );

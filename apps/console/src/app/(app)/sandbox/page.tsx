@@ -1,3 +1,4 @@
+import { PageHeader } from '@/components/ui/primitives';
 import { getEnv } from '@serviceloop/config';
 import { notFound } from 'next/navigation';
 import { SandboxPersonaListSchema } from '@serviceloop/shared';
@@ -28,13 +29,16 @@ export default async function SandboxPage(): Promise<React.JSX.Element> {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Sandbox simulator</h1>
-        <p className="text-sm text-muted-foreground">
-          Act as any customer or technician. Messages are rendered as signed Cloud API webhooks and
-          pushed through the real inbound pipeline.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Demo"
+        title="Sandbox simulator"
+        description={
+          <>
+            Act as any customer or technician. Messages are rendered as signed Cloud API webhooks
+            and pushed through the real inbound pipeline.
+          </>
+        }
+      />
 
       <Simulator personas={personas.personas} staffGroupId={personas.staffGroupId} />
     </div>

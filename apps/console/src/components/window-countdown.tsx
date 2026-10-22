@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Badge } from '@/components/ui/primitives';
+import { Badge, LiveDot } from '@/components/ui/primitives';
 
 /**
  * The WhatsApp 24-hour customer-service window, as a live countdown.
@@ -10,6 +10,14 @@ import { Badge } from '@/components/ui/primitives';
  * number that is true *now* — a server-rendered "4h left" that is really 40
  * minutes is worse than no number, since the whole point is deciding whether
  * there is time to write freely or whether this needs a template.
+ *
+ * The exact expiry, in the tooltip, is rendered **only after mount**. The
+ * server formats dates in the container's locale and timezone and the browser
+ * formats them in the reader's, so a server-rendered `toLocaleString()` and its
+ * hydrated replacement disagree — React calls that a hydration mismatch and
+ * refuses to patch the attribute, leaving whichever string the server happened
+ * to produce. Deferring it means the advisor gets their own clock, which is the
+ * only clock that answers "have I still got time to type a reply?".
  */
 export function WindowCountdown({
   expiresAt,
@@ -19,9 +27,11 @@ export function WindowCountdown({
   open: boolean;
 }): React.JSX.Element {
   const [remaining, setRemaining] = useState<number | null>(() => remainingMs(expiresAt));
+  const [exact, setExact] = useState<string | null>(null);
 
   useEffect(() => {
     if (expiresAt === null) return;
+    setExact(new Date(expiresAt).toLocaleString());
     const timer = setInterval(() => setRemaining(remainingMs(expiresAt)), 30_000);
     setRemaining(remainingMs(expiresAt));
     return () => clearInterval(timer);
@@ -38,19 +48,26 @@ export function WindowCountdown({
   const left = remaining ?? 0;
   if (!open || left <= 0) {
     return (
-      <Badge tone="neutral" title={`Window closed at ${new Date(expiresAt).toLocaleString()}`}>
+      <Badge
+        tone="neutral"
+        {...(exact === null ? {} : { title: `Window closed at ${exact}` })}
+      >
         Window closed
       </Badge>
     );
   }
 
-  // Under an hour is when it starts to matter, so that is when it turns amber.
+  // Under an hour is when it starts to matter, so that is when it turns amber —
+  // and picks up a pulsing dot, because at that point the number is a deadline.
+  const urgent = left < 60 * 60 * 1000;
+
   return (
     <Badge
-      tone={left < 60 * 60 * 1000 ? 'warn' : 'success'}
-      title={`Free-form replies allowed until ${new Date(expiresAt).toLocaleString()}`}
+      tone={urgent ? 'warn' : 'success'}
+      {...(exact === null ? {} : { title: `Free-form replies allowed until ${exact}` })}
       data-testid="window-countdown"
     >
+      {urgent && <LiveDot />}
       {formatRemaining(left)} left
     </Badge>
   );

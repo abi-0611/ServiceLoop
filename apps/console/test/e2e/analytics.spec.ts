@@ -113,6 +113,15 @@ test.describe('analytics', () => {
 
   test('is reachable from the shop navigation', async ({ page }) => {
     await page.goto('/board');
+
+    // Below `lg` the console's navigation is a drawer, so a phone opens it
+    // before it can reach anything. On a desk the rail is already on screen and
+    // this is a no-op — one path, so the desktop and mobile projects are still
+    // asserting the same property: analytics is reachable from the board
+    // without typing a URL.
+    const menu = page.getByRole('button', { name: 'Open navigation' });
+    if (await menu.isVisible()) await menu.click();
+
     await page.getByRole('link', { name: 'Analytics', exact: true }).click();
     await expect(page).toHaveURL(/\/analytics$/);
   });

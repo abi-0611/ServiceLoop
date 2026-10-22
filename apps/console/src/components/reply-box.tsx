@@ -1,9 +1,11 @@
 'use client';
 
 import { SendOutcomeSchema } from '@serviceloop/shared';
+import { AlertTriangle, Clock, SendHorizontal } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Button, Input } from '@/components/ui/primitives';
+import { OrbitalLoader } from '@/components/ui/orbital-loader';
+import { Alert, Button, Input } from '@/components/ui/primitives';
 
 /**
  * The advisor's reply box.
@@ -72,10 +74,10 @@ export function ReplyBox({
   return (
     <div className="space-y-2">
       {!windowOpen && (
-        <p className="rounded-md bg-amber-100 px-3 py-2 text-xs text-amber-900">
+        <Alert tone="warn" icon={<Clock aria-hidden="true" />} className="text-xs">
           The 24-hour customer-service window is closed on this thread. A free-form reply will be
           refused — send an approved template, or call.
-        </p>
+        </Alert>
       )}
 
       <form
@@ -91,25 +93,44 @@ export function ReplyBox({
           placeholder="Reply as an advisor…"
           aria-label="Reply as an advisor"
           data-testid="reply-input"
+          className="rounded-full px-4"
           disabled={busy}
         />
-        <Button type="submit" disabled={busy || body.trim().length === 0} data-testid="reply-send">
-          {busy ? 'Sending…' : 'Send'}
+        <Button
+          type="submit"
+          disabled={busy || body.trim().length === 0}
+          data-testid="reply-send"
+          className="rounded-full px-5"
+        >
+          {busy ? (
+            <>
+              <OrbitalLoader />
+              Sending…
+            </>
+          ) : (
+            <>
+              Send
+              <SendHorizontal aria-hidden="true" />
+            </>
+          )}
         </Button>
       </form>
 
       {notice !== null && (
-        <p
+        <Alert
           role="alert"
           data-testid="reply-notice"
-          className={
-            notice.tone === 'error'
-              ? 'text-sm text-destructive'
-              : 'text-sm text-muted-foreground'
+          tone={notice.tone === 'error' ? 'danger' : 'neutral'}
+          icon={
+            notice.tone === 'error' ? (
+              <AlertTriangle aria-hidden="true" />
+            ) : (
+              <Clock aria-hidden="true" />
+            )
           }
         >
           {notice.text}
-        </p>
+        </Alert>
       )}
     </div>
   );

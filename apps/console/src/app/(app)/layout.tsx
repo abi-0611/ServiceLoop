@@ -1,29 +1,22 @@
 import { getEnv } from '@serviceloop/config';
 import { SessionSchema } from '@serviceloop/shared';
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import type { z } from 'zod';
+import { AppShell } from '@/components/app-shell';
 import { ShopSwitcher } from '@/components/shop-switcher';
 import { ApiError, isSignedIn, serverApiFetch } from '@/lib/api';
 
 const MeSchema = SessionSchema.shape.staff.extend({ shops: SessionSchema.shape.shops });
 
-const NAV: ReadonlyArray<{ href: string; label: string; demoOnly?: boolean }> = [
-  { href: '/board', label: 'Job cards' },
-  { href: '/conversations', label: 'Conversations' },
-  { href: '/review', label: 'Review queue' },
-  { href: '/status', label: 'Status signals' },
-  { href: '/intake', label: 'Intake' },
-  { href: '/gate', label: 'Gate' },
-  { href: '/analytics', label: 'Analytics' },
-  { href: '/sandbox', label: 'Sandbox', demoOnly: true },
-  { href: '/softphone', label: 'Softphone', demoOnly: true },
-  { href: '/settings/guardrails', label: 'Guardrails' },
-  { href: '/settings/templates', label: 'Templates' },
-  { href: '/settings/privacy', label: 'Privacy' },
-];
-
+/**
+ * The signed-in frame.
+ *
+ * Everything visual lives in `<AppShell>`, which is a client component because
+ * a navigation that knows where it is has to read the pathname. The session
+ * lookup stays here, on the server, so the token never crosses that boundary —
+ * the shell is handed a name and a role, not a session.
+ */
 export default async function AppLayout({
   children,
 }: {
@@ -45,49 +38,17 @@ export default async function AppLayout({
   const demoMode = getEnv().DEMO_MODE;
 
   return (
-    <div className="min-h-dvh">
-      <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
-          <Link href="/board" className="text-sm font-semibold tracking-tight">
-            ServiceLoop
-          </Link>
-
-          <ShopSwitcher shops={me.shops} activeShopId={me.shopId} />
-
-          <nav className="order-last flex w-full gap-1 overflow-x-auto sm:order-none sm:w-auto">
-            {NAV.filter((item) => item.demoOnly !== true || demoMode).map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-
-          <div className="ml-auto flex items-center gap-3 text-sm">
-            <span className="hidden text-muted-foreground sm:inline">
-              {me.fullName} · {me.role}
-            </span>
-            <form action="/api/session/logout" method="post">
-              <button
-                type="submit"
-                className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              >
-                Sign out
-              </button>
-            </form>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-4 py-6">
-        <p className="sr-only">
-          Signed in to {activeShop?.name ?? 'your workshop'} as {me.role}
-        </p>
-        {children}
-      </main>
-    </div>
+    <AppShell
+      staffName={me.fullName}
+      role={me.role}
+      shopName={activeShop?.name ?? 'your workshop'}
+      demoMode={demoMode}
+      shopSwitcher={<ShopSwitcher shops={me.shops} activeShopId={me.shopId} />}
+    >
+      <p className="sr-only">
+        Signed in to {activeShop?.name ?? 'your workshop'} as {me.role}
+      </p>
+      {children}
+    </AppShell>
   );
 }

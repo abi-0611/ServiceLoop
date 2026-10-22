@@ -3,7 +3,7 @@
 import { ConfirmDraftResponseSchema } from '@serviceloop/shared';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Button, Card, CardContent, Input, Label, Select } from '@/components/ui/primitives';
+import { Button, Card, CardContent, Field, Input, Select } from '@/components/ui/primitives';
 
 /**
  * The digital job-card form.
@@ -87,7 +87,7 @@ export function NewJobCardForm(): React.JSX.Element {
 
   if (created !== null) {
     return (
-      <Card className="space-y-3 border-emerald-300 bg-emerald-50 p-4">
+      <Card className="space-y-3 border-emerald-300 bg-emerald-50 p-4 dark:border-emerald-400/35 dark:bg-emerald-500/10">
         <p className="text-sm font-semibold text-emerald-900" data-testid="new-card-result">
           Job card {created.code} created.
         </p>
@@ -113,7 +113,7 @@ export function NewJobCardForm(): React.JSX.Element {
     >
       <Card>
         <CardContent className="grid gap-3 pt-4 sm:grid-cols-2">
-          <Field label="Customer name" required>
+          <Field id="jc-customer-name" label="Customer name" required>
             <Input
               value={customerName}
               onChange={(event) => setCustomerName(event.target.value)}
@@ -121,7 +121,7 @@ export function NewJobCardForm(): React.JSX.Element {
               required
             />
           </Field>
-          <Field label="Phone" required hint="Any Indian format; +91 is assumed.">
+          <Field id="jc-phone" label="Phone" required hint="Any Indian format; +91 is assumed.">
             <Input
               value={phone}
               onChange={(event) => setPhone(event.target.value)}
@@ -130,7 +130,7 @@ export function NewJobCardForm(): React.JSX.Element {
               required
             />
           </Field>
-          <Field label="Registration" required hint="Spaces and hyphens are ignored.">
+          <Field id="jc-registration" label="Registration" required hint="Spaces and hyphens are ignored.">
             <Input
               value={registration}
               onChange={(event) => setRegistration(event.target.value)}
@@ -138,23 +138,23 @@ export function NewJobCardForm(): React.JSX.Element {
               required
             />
           </Field>
-          <Field label="Odometer (km)">
+          <Field id="jc-odometer" label="Odometer (km)">
             <Input
               value={odometer}
               onChange={(event) => setOdometer(event.target.value)}
               inputMode="numeric"
             />
           </Field>
-          <Field label="Make">
+          <Field id="jc-make" label="Make">
             <Input value={make} onChange={(event) => setMake(event.target.value)} />
           </Field>
-          <Field label="Model">
+          <Field id="jc-model" label="Model">
             <Input value={model} onChange={(event) => setModel(event.target.value)} />
           </Field>
-          <Field label="Promised by" hint="Free text is fine — “evening”, “tomorrow 5pm”.">
+          <Field id="jc-promised-at" label="Promised by" hint="Free text is fine — “evening”, “tomorrow 5pm”.">
             <Input value={promisedAt} onChange={(event) => setPromisedAt(event.target.value)} />
           </Field>
-          <Field label="Language">
+          <Field id="jc-language" label="Language">
             <Select value={language} onChange={(event) => setLanguage(event.target.value)}>
               <option value="en">English</option>
               <option value="ta">தமிழ்</option>
@@ -247,25 +247,3 @@ export function NewJobCardForm(): React.JSX.Element {
   }
 }
 
-function Field({
-  label,
-  hint,
-  required,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}): React.JSX.Element {
-  return (
-    <div className="space-y-1">
-      <Label>
-        {label}
-        {required === true && <span className="text-destructive"> *</span>}
-      </Label>
-      {children}
-      {hint !== undefined && <p className="text-xs text-muted-foreground">{hint}</p>}
-    </div>
-  );
-}

@@ -1,10 +1,11 @@
 'use client';
 
 import { ReviewDecisionResponseSchema, type ReviewCandidate } from '@serviceloop/shared';
+import { AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Badge, Button, Card } from '@/components/ui/primitives';
+import { Alert, Badge, Button, Card } from '@/components/ui/primitives';
 
 /**
  * One candidate, and the three things an advisor can do with it.
@@ -108,13 +109,20 @@ export function ReviewCandidateCard({
       )}
 
       {candidate.checkerReasons.length > 0 && (
-        <ul className="mt-3 space-y-1" data-testid="review-checker-reasons">
-          {candidate.checkerReasons.map((detail) => (
-            <li key={detail} className="text-xs text-amber-900">
-              ⚠ {detail}
-            </li>
-          ))}
-        </ul>
+        <Alert
+          tone="warn"
+          icon={<AlertTriangle aria-hidden="true" />}
+          className="mt-3"
+        >
+          {/* Why the checker held this draft. It is the advisor's whole basis
+              for telling "the agent was wrong" from "the agent was careful",
+              so it reads as a notice rather than as a footnote. */}
+          <ul className="space-y-1 text-xs" data-testid="review-checker-reasons">
+            {candidate.checkerReasons.map((detail) => (
+              <li key={detail}>{detail}</li>
+            ))}
+          </ul>
+        </Alert>
       )}
 
       {candidate.evidenceRefs.length > 0 && (
@@ -212,9 +220,15 @@ export function ReviewCandidateCard({
       </div>
 
       {error !== null && (
-        <p role="alert" data-testid="review-error" className="mt-3 text-sm text-destructive">
+        <Alert
+          role="alert"
+          data-testid="review-error"
+          tone="danger"
+          icon={<AlertTriangle aria-hidden="true" />}
+          className="mt-3"
+        >
           {error}
-        </p>
+        </Alert>
       )}
     </Card>
   );

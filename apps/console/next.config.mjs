@@ -14,6 +14,22 @@ import { PHASE_DEVELOPMENT_SERVER } from 'next/constants.js';
 const buildConfig = (phase) => ({
   reactStrictMode: true,
   poweredByHeader: false,
+
+  /**
+   * Where the build output goes. `.next` unless something asks for elsewhere.
+   *
+   * Two Next processes pointed at one output directory overwrite each other's
+   * webpack chunks and route manifests, and the damage does not look like a
+   * conflict: routes that exist start answering 404, pages half-render, and the
+   * browser reports `Cannot read properties of undefined (reading 'call')` from
+   * inside the React scheduler. Every one of those is a missing chunk.
+   *
+   * That happens whenever a second dev server is started — a second terminal, a
+   * preview tool, a `next build` run while `next dev` is up. Setting
+   * `NEXT_DIST_DIR` gives that process its own directory, and the default keeps
+   * production builds exactly where the Dockerfile and the deploy expect them.
+   */
+  distDir: process.env['NEXT_DIST_DIR'] ?? '.next',
   // Workspace packages ship compiled CJS; Next transpiles them for the client.
   transpilePackages: ['@serviceloop/shared', '@serviceloop/config'],
 

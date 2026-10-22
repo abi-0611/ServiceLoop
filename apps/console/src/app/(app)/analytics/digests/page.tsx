@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react';
 import { formatPaise, OwnerDigestListSchema } from '@serviceloop/shared';
 import Link from 'next/link';
 import { Badge, Card, CardContent, CardHeader, CardTitle, EmptyState } from '@/components/ui/primitives';
@@ -26,10 +27,17 @@ export default async function DigestsPage(): Promise<React.JSX.Element> {
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/analytics" className="text-sm text-muted-foreground hover:underline">
-          ← Back to analytics
+        <Link
+          href="/analytics"
+          className="group inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft
+            className="size-4 transition-transform duration-200 ease-swift group-hover:-translate-x-0.5"
+            aria-hidden="true"
+          />
+          Back to analytics
         </Link>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight">Owner digests</h1>
+        <h1 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">Owner digests</h1>
         <p className="text-sm text-muted-foreground">
           The evening brief, exactly as it was sent — same numbers, same buttons.
         </p>

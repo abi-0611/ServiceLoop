@@ -7,6 +7,7 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  PageHeader,
 } from '@/components/ui/primitives';
 import { serverApiFetch } from '@/lib/api';
 
@@ -117,13 +118,16 @@ export default async function TemplatesPage(): Promise<React.JSX.Element> {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">WhatsApp templates</h1>
-        <p className="text-sm text-muted-foreground">
-          {summary.ready} of {summary.total} approved in every language they need. Meta approves
-          per language variant, so a template is only usable when all of its are through.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Settings"
+        title="WhatsApp templates"
+        description={
+          <>
+            {summary.ready} of {summary.total} approved in every language they need. Meta approves
+            per language variant, so a template is only usable when all of its are through.
+          </>
+        }
+      />
 
       <div className="grid gap-3 sm:grid-cols-4" data-testid="templates-summary">
         <Tile label="Ready" value={summary.ready} tone="success" />
@@ -141,8 +145,8 @@ export default async function TemplatesPage(): Promise<React.JSX.Element> {
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <p className="text-muted-foreground">
-              This is a fault in the build, not in your Business Manager. Nothing you do on Meta&rsquo;s
-              side will fix it — report it with the block below.
+              This is a fault in the build, not in your Business Manager. Nothing you do on
+              Meta&rsquo;s side will fix it — report it with the block below.
             </p>
             <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
               {catalog.lint.formatted}

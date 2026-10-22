@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react';
 import { IntakeDraftDetailSchema } from '@serviceloop/shared';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -32,8 +33,15 @@ export default async function DraftPage({
   return (
     <div className="space-y-4">
       <div>
-        <Link href="/intake" className="text-sm text-muted-foreground hover:underline">
-          ← Intake
+        <Link
+          href="/intake"
+          className="group inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft
+            className="size-4 transition-transform duration-200 ease-swift group-hover:-translate-x-0.5"
+            aria-hidden="true"
+          />
+          Intake
         </Link>
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-xl font-semibold tracking-tight">

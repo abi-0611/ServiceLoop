@@ -2,77 +2,618 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------------------------------------------------------------------------
+   Tokens
+   ---------------------------------------------------------------------------
+   Two complete themes. Every colour the console draws resolves through one of
+   these variables, so a surface can never be light-mode-only by accident — the
+   failure this replaces was a job-card board that turned into white rectangles
+   on black the first time somebody worked a late shift.
+
+   The palette is deliberately **not** the cool blue-grey every dashboard ships
+   with, and the reason is structural rather than aesthetic: this console
+   already spends twelve hues on job-card state, and a brand colour competing
+   with those is a brand colour that makes "awaiting parts" harder to find. So
+   the chrome is achromatic and slightly warm — paper in the light theme,
+   photographic charcoal in the dark one — and the only saturated colours on a
+   normal screen are the ones that *mean* something.
+
+   Primary is prussian ink: the blue of a rubber stamp on a paper job card,
+   dark enough to sit under white text at 4.5:1 in the light theme. Signal
+   orange appears exactly twice — the mark, and the live indicator — because a
+   workshop's own colour language is hazard tape and jack stands, and one hit
+   of it identifies the product without ever entering the data.
+--------------------------------------------------------------------------- */
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    --background: 40 20% 97%;
+    --foreground: 220 16% 13%;
+
+    --surface: 40 33% 99%;
+    --surface-foreground: 220 16% 13%;
+
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
-    --primary: 221 83% 45%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 42%;
-    --accent: 210 40% 94%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 72% 45%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214 32% 88%;
-    --input: 214 32% 88%;
-    --ring: 221 83% 45%;
-    --radius: 0.6rem;
+    --card-foreground: 220 16% 13%;
+
+    --primary: 214 68% 27%;
+    --primary-foreground: 40 30% 98%;
+    --primary-soft: 214 45% 93%;
+
+    --brand: 18 84% 45%;
+    --brand-foreground: 30 60% 98%;
+
+    --secondary: 40 12% 92%;
+    --secondary-foreground: 220 16% 13%;
+
+    --muted: 40 12% 93%;
+    --muted-foreground: 220 8% 40%;
+
+    --accent: 40 14% 91%;
+    --accent-foreground: 220 16% 13%;
+
+    --destructive: 2 68% 43%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 158 68% 28%;
+    --success-foreground: 152 60% 97%;
+
+    --warning: 30 88% 40%;
+    --warning-foreground: 40 80% 97%;
+
+    --border: 40 11% 86%;
+    --input: 40 11% 81%;
+    --ring: 214 68% 27%;
+
+    --shadow-color: 30 25% 18%;
+    --radius: 0.4rem;
+  }
+
+  .dark {
+    --background: 220 9% 7%;
+    --foreground: 40 10% 92%;
+
+    --surface: 220 8% 10%;
+    --surface-foreground: 40 10% 92%;
+
+    --card: 220 8% 11%;
+    --card-foreground: 40 10% 92%;
+
+    --primary: 209 76% 62%;
+    --primary-foreground: 215 45% 9%;
+    --primary-soft: 213 40% 19%;
+
+    --brand: 20 86% 56%;
+    --brand-foreground: 25 60% 8%;
+
+    --secondary: 220 7% 16%;
+    --secondary-foreground: 40 10% 92%;
+
+    --muted: 220 7% 16%;
+    --muted-foreground: 40 5% 62%;
+
+    --accent: 220 7% 19%;
+    --accent-foreground: 40 10% 92%;
+
+    --destructive: 2 70% 56%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 158 55% 46%;
+    --success-foreground: 155 45% 8%;
+
+    --warning: 34 88% 56%;
+    --warning-foreground: 30 60% 8%;
+
+    --border: 220 7% 19%;
+    --input: 220 7% 24%;
+    --ring: 209 76% 62%;
+
+    --shadow-color: 220 30% 2%;
   }
 
   * {
     @apply border-border;
   }
 
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings:
       'rlig' 1,
-      'calt' 1;
+      'calt' 1,
+      'ss01' 1;
+    /* A colour switch should look like the lights changing, not like a reload. */
+    transition:
+      background-color 250ms var(--tw-ease, cubic-bezier(0.22, 1, 0.36, 1)),
+      color 250ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Numbers that sit in a column — money, counts, rates — never reflow. */
+  .tabular-nums,
+  table,
+  time {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background-color: hsl(var(--primary) / 0.22);
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* A scrollbar that belongs to the theme rather than to the browser. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+    background-clip: content-box;
   }
 }
 
-/* State colours for the job-card board. Kept as a single map so a state can
-   never be coloured inconsistently between the board and the drawer. */
+/* ---------------------------------------------------------------------------
+   State colours for the job-card board
+   ---------------------------------------------------------------------------
+   Kept as a single map so a state can never be coloured inconsistently between
+   the board and the drawer, and so every one of them has a dark-mode answer.
+--------------------------------------------------------------------------- */
+
 @layer components {
   .state-DRAFT {
-    @apply bg-slate-100 text-slate-700 ring-slate-300;
+    @apply bg-slate-100 text-slate-700 ring-slate-300 dark:bg-slate-500/15 dark:text-slate-300 dark:ring-slate-400/30;
   }
   .state-OPEN {
-    @apply bg-sky-50 text-sky-800 ring-sky-300;
+    @apply bg-sky-50 text-sky-800 ring-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:ring-sky-400/30;
   }
   .state-IN_DIAGNOSIS {
-    @apply bg-indigo-50 text-indigo-800 ring-indigo-300;
+    @apply bg-indigo-50 text-indigo-800 ring-indigo-300 dark:bg-indigo-500/15 dark:text-indigo-300 dark:ring-indigo-400/30;
   }
   .state-AWAITING_APPROVAL {
-    @apply bg-amber-50 text-amber-900 ring-amber-400;
+    @apply bg-amber-50 text-amber-900 ring-amber-400 dark:bg-amber-500/15 dark:text-amber-300 dark:ring-amber-400/40;
   }
   .state-IN_PROGRESS {
-    @apply bg-blue-50 text-blue-800 ring-blue-300;
+    @apply bg-blue-50 text-blue-800 ring-blue-300 dark:bg-blue-500/15 dark:text-blue-300 dark:ring-blue-400/30;
   }
   .state-AWAITING_PARTS {
-    @apply bg-orange-50 text-orange-900 ring-orange-300;
+    @apply bg-orange-50 text-orange-900 ring-orange-300 dark:bg-orange-500/15 dark:text-orange-300 dark:ring-orange-400/30;
   }
   .state-QUALITY_CHECK {
-    @apply bg-violet-50 text-violet-800 ring-violet-300;
+    @apply bg-violet-50 text-violet-800 ring-violet-300 dark:bg-violet-500/15 dark:text-violet-300 dark:ring-violet-400/30;
   }
   .state-READY_FOR_DELIVERY {
-    @apply bg-emerald-50 text-emerald-800 ring-emerald-300;
+    @apply bg-emerald-50 text-emerald-800 ring-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-400/30;
   }
   .state-AWAITING_PAYMENT {
-    @apply bg-rose-50 text-rose-800 ring-rose-300;
+    @apply bg-rose-50 text-rose-800 ring-rose-300 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-400/30;
   }
   .state-DELIVERED {
-    @apply bg-teal-50 text-teal-800 ring-teal-300;
+    @apply bg-teal-50 text-teal-800 ring-teal-300 dark:bg-teal-500/15 dark:text-teal-300 dark:ring-teal-400/30;
   }
   .state-CLOSED {
-    @apply bg-slate-100 text-slate-600 ring-slate-300;
+    @apply bg-slate-100 text-slate-600 ring-slate-300 dark:bg-slate-500/10 dark:text-slate-400 dark:ring-slate-400/25;
   }
   .state-CANCELLED {
-    @apply bg-zinc-100 text-zinc-600 ring-zinc-300;
+    @apply bg-zinc-100 text-zinc-600 ring-zinc-300 dark:bg-zinc-500/10 dark:text-zinc-400 dark:ring-zinc-400/25;
+  }
+
+  /* The accent stripe a board column wears, so a column is identifiable from
+     across a workshop without reading its heading. */
+  .rail-DRAFT,
+  .rail-CLOSED {
+    @apply from-slate-400 to-slate-500;
+  }
+  .rail-OPEN {
+    @apply from-sky-400 to-sky-600;
+  }
+  .rail-IN_DIAGNOSIS {
+    @apply from-indigo-400 to-indigo-600;
+  }
+  .rail-AWAITING_APPROVAL {
+    @apply from-amber-400 to-amber-600;
+  }
+  .rail-IN_PROGRESS {
+    @apply from-blue-400 to-blue-600;
+  }
+  .rail-AWAITING_PARTS {
+    @apply from-orange-400 to-orange-600;
+  }
+  .rail-QUALITY_CHECK {
+    @apply from-violet-400 to-violet-600;
+  }
+  .rail-READY_FOR_DELIVERY {
+    @apply from-emerald-400 to-emerald-600;
+  }
+  .rail-AWAITING_PAYMENT {
+    @apply from-rose-400 to-rose-600;
+  }
+  .rail-DELIVERED {
+    @apply from-teal-400 to-teal-600;
+  }
+  .rail-CANCELLED {
+    @apply from-zinc-400 to-zinc-500;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Motion & surface utilities
+   ---------------------------------------------------------------------------
+   All of it CSS. The console is almost entirely React Server Components, and
+   an animation library would have turned every animated list into a client
+   bundle for the sake of an effect a keyframe already does at 60fps.
+--------------------------------------------------------------------------- */
+
+@layer utilities {
+  /* Entrance choreography. `--i` is the item's index; a list sets it inline and
+     gets a stagger without a single line of JavaScript. */
+  .animate-enter {
+    animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--i, 0) * 55ms);
+  }
+
+  .animate-enter-fast {
+    animation: fade-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--i, 0) * 35ms);
+  }
+
+  /* A card that lifts toward the finger. Transform-only, so it never repaints
+     the text underneath it. */
+  .lift {
+    transition:
+      transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+
+  .lift:hover {
+    transform: translate3d(0, -3px, 0);
+  }
+
+  .lift:active {
+    transform: translate3d(0, -1px, 0);
+  }
+
+  /* Frosted surface for anything that floats over content. */
+  .glass {
+    background-color: hsl(var(--surface) / 0.72);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+  }
+
+  /* The pointer-following wash.
+
+     A deliberately quiet version of the SpotlightCard idea: achromatic, at 4%,
+     and stopping well short of the card's edge. A saturated radial glow behind
+     every card is the house style of a hundred component galleries, and on a
+     board of eighty job cards it also fights the state colours that are the
+     only thing on the screen a colour is allowed to mean. What survives is the
+     part that was actually useful — the card the pointer is over feels lit —
+     without the card looking like it is advertising itself.
+
+     `--mx`/`--my` are written by `<SpotlightArea>`; with no JavaScript it
+     simply never lights, which is the right no-JS behaviour for a decoration. */
+  .spotlight {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .spotlight::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0;
+    transition: opacity 350ms ease;
+    background: radial-gradient(
+      340px circle at var(--mx, 50%) var(--my, 50%),
+      hsl(var(--foreground) / 0.045),
+      transparent 60%
+    );
+  }
+
+  .spotlight:hover::before,
+  .spotlight:focus-within::before {
+    opacity: 1;
+  }
+
+  .spotlight > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* The hairline under a control, from @cybergaz/neon-button.
+     ---------------------------------------------------------------
+     The source draws two 1px gradient rules — one across the face, one
+     just below the edge — that fade in on hover, in electric blue. The
+     mechanic is the good part: it lights the *edge* of the control
+     rather than the whole control, so a button acknowledges the pointer
+     without changing weight on the page.
+
+     Ours runs in the theme's own ink and brand hues rather than neon,
+     and it is a pseudo-element pair rather than two child spans, because
+     `<Button asChild>` renders a Slot that accepts exactly one child —
+     extra spans would break every `<Button asChild><Link/></Button>` in
+     the console. */
+  .hairline::before,
+  .hairline::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    height: 1px;
+    width: 75%;
+    transform: translateX(-50%);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 500ms ease-in-out;
+  }
+
+  .hairline::before {
+    top: 0;
+    background-image: linear-gradient(
+      to right,
+      transparent,
+      hsl(var(--hairline-hue, 0 0% 100%) / 0.55),
+      transparent
+    );
+  }
+
+  .hairline::after {
+    bottom: 0;
+    background-image: linear-gradient(
+      to right,
+      transparent,
+      hsl(var(--hairline-hue, 0 0% 100%) / 0.75),
+      transparent
+    );
+  }
+
+  .hairline:hover::before,
+  .hairline:focus-visible::before {
+    opacity: 1;
+  }
+
+  .hairline:hover::after,
+  .hairline:focus-visible::after {
+    opacity: 0.35;
+  }
+
+  /* The sheen sweep, from @beratberkayg/highlight-card.
+     ---------------------------------------------------------------
+     The source runs a skewed band of light across the card, alongside
+     bouncing blobs, pinging rings, pulsing gradient text and three
+     bouncing dots — about eight infinite animations per card. On a board
+     of eighty job cards that is eighty times the compositor work, for a
+     surface whose job is to be read at a glance.
+
+     So only the sweep survives, and only on hover: one transform, one
+     element, nothing running while the advisor is trying to read. */
+  .sheen::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 55%;
+    pointer-events: none;
+    z-index: 2;
+    transform: translateX(-140%) skewX(-14deg);
+    background-image: linear-gradient(
+      to right,
+      transparent,
+      hsl(var(--foreground) / 0.06),
+      transparent
+    );
+    transition: transform 900ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .dark .sheen::after {
+    background-image: linear-gradient(
+      to right,
+      transparent,
+      hsl(0 0% 100% / 0.07),
+      transparent
+    );
+  }
+
+  .sheen:hover::after,
+  .sheen:focus-within::after {
+    transform: translateX(320%) skewX(-14deg);
+  }
+
+  /* Loading placeholder. */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: hsl(var(--muted));
+  }
+
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.06), transparent);
+    animation: shimmer 1.8s infinite;
+  }
+
+  /* Ruled paper.
+
+     The empty states and the sign-in screen sit on this rather than on a
+     gradient. A workshop's own document is a ruled carbon-copy docket, and one
+     set of horizontal rules at the body line-height says "a form nobody has
+     filled in yet" more precisely than any illustration would — while costing
+     one gradient and no image request. */
+  .ruled {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 27px,
+      hsl(var(--foreground) / 0.055) 27px,
+      hsl(var(--foreground) / 0.055) 28px
+    );
+  }
+
+  /* The same idea for a whole page: rules plus a single vertical margin line,
+     the way a docket has a column ruled down the left. */
+  .docket {
+    background-image:
+      linear-gradient(to right, hsl(var(--brand) / 0.16) 1px, transparent 1px),
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 31px,
+        hsl(var(--foreground) / 0.05) 31px,
+        hsl(var(--foreground) / 0.05) 32px
+      );
+    background-size:
+      100% 100%,
+      100% 32px;
+    background-position:
+      3.5rem 0,
+      0 0;
+  }
+
+  /* Fades any decorative backdrop out before it reaches the content. */
+  .fade-out-b {
+    -webkit-mask-image: linear-gradient(to bottom, #000, transparent);
+    mask-image: linear-gradient(to bottom, #000, transparent);
+  }
+
+  /* Loading placeholder. */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: hsl(var(--muted));
+  }
+
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, hsl(var(--foreground) / 0.06), transparent);
+    animation: shimmer 1.8s infinite;
+  }
+
+  /* Ruled paper.
+
+     The empty states and the sign-in screen sit on this rather than on a
+     gradient. A workshop's own document is a ruled carbon-copy docket, and one
+     set of horizontal rules at the body line-height says "a form nobody has
+     filled in yet" more precisely than any illustration would — while costing
+     one gradient and no image request. */
+  .ruled {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 27px,
+      hsl(var(--foreground) / 0.055) 27px,
+      hsl(var(--foreground) / 0.055) 28px
+    );
+  }
+
+  /* The same idea for a whole page: rules plus a single vertical margin line,
+     the way a docket has a column ruled down the left. */
+  .docket {
+    background-image:
+      linear-gradient(to right, hsl(var(--brand) / 0.16) 1px, transparent 1px),
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 31px,
+        hsl(var(--foreground) / 0.05) 31px,
+        hsl(var(--foreground) / 0.05) 32px
+      );
+    background-size:
+      100% 100%,
+      100% 32px;
+    background-position:
+      3.5rem 0,
+      0 0;
+  }
+
+  /* Fades any decorative backdrop out before it reaches the content. */
+  .fade-out-b {
+    -webkit-mask-image: linear-gradient(to bottom, #000, transparent);
+    mask-image: linear-gradient(to bottom, #000, transparent);
+  }
+
+  /* A live indicator: the dot, plus a ring leaving it. */
+  .ping-dot::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background-color: currentColor;
+    animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Horizontal scrollers fade at the edge rather than cutting a card in half. */
+  .fade-edges-x {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 12px, #000 96%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 12px, #000 96%, transparent);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion
+   ---------------------------------------------------------------------------
+   Everything above is decoration. Someone who has asked their machine to stop
+   moving things gets the finished state immediately — not a slower version of
+   the animation.
+--------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .lift:hover {
+    transform: none;
   }
 }

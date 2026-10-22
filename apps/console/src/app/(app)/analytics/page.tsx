@@ -1,8 +1,19 @@
 import { AnalyticsRangeSchema, formatPaise, SessionSchema } from '@serviceloop/shared';
+import { ArrowUpRight, Download } from 'lucide-react';
 import Link from 'next/link';
 import { KpiTile } from '@/components/kpi-tile';
 import { RecomputeButton } from '@/components/recompute-button';
-import { Badge, Card, CardContent, CardHeader, CardTitle, EmptyState } from '@/components/ui/primitives';
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  PageHeader,
+  SectionHeading,
+} from '@/components/ui/primitives';
+import { SpotlightArea } from '@/components/ui/spotlight';
 import { serverApiFetch } from '@/lib/api';
 
 /**
@@ -48,25 +59,29 @@ export default async function AnalyticsPage({
   const hasData = range.days.length > 0;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Analytics</h1>
-          <p className="text-sm text-muted-foreground">
+    <div className="space-y-8">
+      <PageHeader
+        eyebrow="Insight"
+        title="Analytics"
+        description={
+          <>
             {range.from} to {range.to} · every figure folded from the event log.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href={`/api/analytics/export.csv?from=${range.from}&to=${range.to}`}
-            className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-accent"
-            data-testid="analytics-export"
-          >
-            Export CSV
-          </Link>
-          {role === 'OWNER' && <RecomputeButton from={range.from} to={range.to} />}
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            <Link
+              href={`/api/analytics/export.csv?from=${range.from}&to=${range.to}`}
+              className="inline-flex h-11 items-center gap-2 rounded-md border border-input bg-background/60 px-4 text-sm font-medium shadow-xs transition-[background-color,border-color,transform] duration-200 ease-swift hover:border-primary/40 hover:bg-accent active:scale-[0.98]"
+              data-testid="analytics-export"
+            >
+              <Download className="size-4" aria-hidden="true" />
+              Export CSV
+            </Link>
+            {role === 'OWNER' && <RecomputeButton from={range.from} to={range.to} />}
+          </>
+        }
+      />
 
       {!hasData ? (
         <EmptyState
@@ -75,8 +90,9 @@ export default async function AnalyticsPage({
         />
       ) : (
         <>
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <SpotlightArea className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <KpiTile
+              index={0}
               label="Approved"
               value={total.approvedValuePaise}
               format="money"
@@ -84,6 +100,7 @@ export default async function AnalyticsPage({
               testId="kpi-approved"
             />
             <KpiTile
+              index={1}
               label="Recovered from declined work"
               value={total.recoveredPaise}
               format="money"
@@ -91,6 +108,7 @@ export default async function AnalyticsPage({
               testId="kpi-recovered"
             />
             <KpiTile
+              index={2}
               label="Vehicles in / out"
               value={total.vehiclesIn}
               format="count"
@@ -98,20 +116,22 @@ export default async function AnalyticsPage({
               testId="kpi-vehicles"
             />
             <KpiTile
+              index={3}
               label="Waiting on approval"
               value={total.pendingApprovals.length}
               format="count"
               hint="past the shop's stuck threshold, right now"
               testId="kpi-pending"
             />
-          </section>
+          </SpotlightArea>
 
           <section>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <SectionHeading className="mb-3">
               The loop
-            </h2>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            </SectionHeading>
+            <SpotlightArea className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <KpiTile
+                index={0}
                 label="Approval turnaround (median)"
                 value={kpis.approvalTurnaroundMedianMinutes}
                 previous={previousKpis?.approvalTurnaroundMedianMinutes ?? null}
@@ -124,6 +144,7 @@ export default async function AnalyticsPage({
                 testId="kpi-turnaround"
               />
               <KpiTile
+                index={1}
                 label="Approval conversion"
                 value={kpis.approvalConversionRate}
                 previous={previousKpis?.approvalConversionRate ?? null}
@@ -132,6 +153,7 @@ export default async function AnalyticsPage({
                 testId="kpi-conversion"
               />
               <KpiTile
+                index={2}
                 label="Status deflection"
                 value={kpis.statusDeflectionRate}
                 previous={previousKpis?.statusDeflectionRate ?? null}
@@ -140,6 +162,7 @@ export default async function AnalyticsPage({
                 testId="kpi-deflection"
               />
               <KpiTile
+                index={3}
                 label="On-time delivery"
                 value={kpis.onTimeDeliveryRate}
                 previous={previousKpis?.onTimeDeliveryRate ?? null}
@@ -148,6 +171,7 @@ export default async function AnalyticsPage({
                 testId="kpi-ontime"
               />
               <KpiTile
+                index={4}
                 label="Declined-work recovery"
                 value={kpis.declinedWorkRecoveryRate}
                 previous={previousKpis?.declinedWorkRecoveryRate ?? null}
@@ -156,6 +180,7 @@ export default async function AnalyticsPage({
                 testId="kpi-recovery-rate"
               />
               <KpiTile
+                index={5}
                 label="Repeat visits"
                 value={kpis.repeatVisitRate}
                 previous={previousKpis?.repeatVisitRate ?? null}
@@ -163,15 +188,16 @@ export default async function AnalyticsPage({
                 hint="visits from a customer seen in the window"
                 testId="kpi-repeat"
               />
-            </div>
+            </SpotlightArea>
           </section>
 
           <section>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <SectionHeading className="mb-3">
               The agent
-            </h2>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            </SectionHeading>
+            <SpotlightArea className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <KpiTile
+                index={0}
                 label="Containment"
                 value={kpis.agentContainmentRate}
                 previous={previousKpis?.agentContainmentRate ?? null}
@@ -180,6 +206,7 @@ export default async function AnalyticsPage({
                 testId="kpi-containment"
               />
               <KpiTile
+                index={1}
                 label="Drafts accepted unedited"
                 value={kpis.draftAcceptedWithoutEditRate}
                 previous={previousKpis?.draftAcceptedWithoutEditRate ?? null}
@@ -188,6 +215,7 @@ export default async function AnalyticsPage({
                 testId="kpi-drafts"
               />
               <KpiTile
+                index={2}
                 label="Calls contained"
                 value={kpis.voiceContainmentRate}
                 previous={previousKpis?.voiceContainmentRate ?? null}
@@ -196,21 +224,23 @@ export default async function AnalyticsPage({
                 testId="kpi-voice"
               />
               <KpiTile
+                index={3}
                 label="Review velocity"
                 value={total.reviewAsks}
                 format="count"
                 hint={`${total.feedbackPositive} positive, ${total.feedbackNegative} negative`}
                 testId="kpi-reviews"
               />
-            </div>
+            </SpotlightArea>
           </section>
 
           <section>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <SectionHeading className="mb-3">
               Guardrails
-            </h2>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            </SectionHeading>
+            <SpotlightArea className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <KpiTile
+                index={0}
                 label="Messages blocked"
                 value={total.messagesBlocked}
                 format="count"
@@ -218,12 +248,14 @@ export default async function AnalyticsPage({
                 testId="kpi-blocked"
               />
               <KpiTile
+                index={1}
                 label="Consent revoked"
                 value={total.consentRevocations}
                 format="count"
                 testId="kpi-revocations"
               />
               <KpiTile
+                index={2}
                 label="Retention withheld"
                 value={total.retentionTouchesSkipped}
                 format="count"
@@ -231,49 +263,61 @@ export default async function AnalyticsPage({
                 testId="kpi-withheld"
               />
               <KpiTile
+                index={3}
                 label="Alerts raised"
                 value={total.alertsRaised}
                 format="count"
                 hint={`${total.silentBays} silent bay(s)`}
                 testId="kpi-alerts"
               />
-            </div>
+            </SpotlightArea>
           </section>
 
-          <Card>
+          <Card className="animate-enter overflow-hidden">
             <CardHeader>
               <CardTitle>Day by day</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm" data-testid="analytics-days">
+              <div className="-mx-4 overflow-x-auto px-4">
+                <table className="w-full min-w-[46rem] text-sm" data-testid="analytics-days">
                   <thead>
-                    <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="py-2 pr-4 font-medium">Day</th>
-                      <th className="py-2 pr-4 font-medium">In</th>
-                      <th className="py-2 pr-4 font-medium">Out</th>
-                      <th className="py-2 pr-4 font-medium">Approved</th>
-                      <th className="py-2 pr-4 font-medium">Recovered</th>
-                      <th className="py-2 pr-4 font-medium">Ledgered</th>
-                      <th className="py-2 pr-4 font-medium">Feedback</th>
+                    {/* Sticky so the column a figure belongs to is still on
+                        screen when a fortnight of rows is scrolled. */}
+                    <tr className="border-b border-border text-left text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
+                      <th className="sticky left-0 bg-card py-2.5 pr-4 font-semibold">Day</th>
+                      <th className="py-2.5 pr-4 font-semibold">In</th>
+                      <th className="py-2.5 pr-4 font-semibold">Out</th>
+                      <th className="py-2.5 pr-4 text-right font-semibold">Approved</th>
+                      <th className="py-2.5 pr-4 text-right font-semibold">Recovered</th>
+                      <th className="py-2.5 pr-4 text-right font-semibold">Ledgered</th>
+                      <th className="py-2.5 pr-4 font-semibold">Feedback</th>
                     </tr>
                   </thead>
                   <tbody>
                     {[...range.days].reverse().map((day) => (
-                      <tr key={day.day} className="border-b border-border/60 last:border-0">
-                        <td className="py-2 pr-4 font-medium tabular-nums">{day.day}</td>
-                        <td className="py-2 pr-4 tabular-nums">{day.vehiclesIn}</td>
-                        <td className="py-2 pr-4 tabular-nums">{day.vehiclesOut}</td>
-                        <td className="py-2 pr-4 tabular-nums">
+                      <tr
+                        key={day.day}
+                        className="border-b border-border/60 transition-colors duration-150 last:border-0 hover:bg-accent/50"
+                      >
+                        <td className="sticky left-0 bg-card py-2.5 pr-4 font-mono text-xs font-medium tabular-nums">
+                          {day.day}
+                        </td>
+                        <td className="py-2.5 pr-4 tabular-nums">{day.vehiclesIn}</td>
+                        <td className="py-2.5 pr-4 tabular-nums">{day.vehiclesOut}</td>
+                        <td className="py-2.5 pr-4 text-right tabular-nums">
                           {formatPaise(day.approvedValuePaise)}
                         </td>
-                        <td className="py-2 pr-4 tabular-nums">{formatPaise(day.recoveredPaise)}</td>
-                        <td className="py-2 pr-4 tabular-nums">{formatPaise(day.ledgeredPaise)}</td>
-                        <td className="py-2 pr-4">
+                        <td className="py-2.5 pr-4 text-right tabular-nums">
+                          {formatPaise(day.recoveredPaise)}
+                        </td>
+                        <td className="py-2.5 pr-4 text-right tabular-nums">
+                          {formatPaise(day.ledgeredPaise)}
+                        </td>
+                        <td className="py-2.5 pr-4">
                           {day.feedbackNegative > 0 ? (
                             <Badge tone="warn">{day.feedbackNegative} unhappy</Badge>
                           ) : (
-                            <span className="text-muted-foreground tabular-nums">
+                            <span className="tabular-nums text-muted-foreground">
                               {day.feedbackPositive + day.feedbackNeutral}
                             </span>
                           )}
@@ -288,26 +332,49 @@ export default async function AnalyticsPage({
         </>
       )}
 
-      <nav className="flex flex-wrap gap-2 text-sm">
-        <Link
-          href="/analytics/ledger"
-          className="rounded-md border border-border px-3 py-2 font-medium hover:bg-accent"
-        >
-          Declined-work ledger →
-        </Link>
-        <Link
-          href="/analytics/retention"
-          className="rounded-md border border-border px-3 py-2 font-medium hover:bg-accent"
-        >
-          Retention touches & feedback →
-        </Link>
-        <Link
-          href="/analytics/digests"
-          className="rounded-md border border-border px-3 py-2 font-medium hover:bg-accent"
-        >
-          Owner digests →
-        </Link>
-      </nav>
+      {/* The three reports this page summarises. Cards rather than a row of
+          pills, because each one is a destination an owner spends minutes in,
+          not a filter they flick between. */}
+      <SpotlightArea>
+        <nav className="grid gap-3 sm:grid-cols-3" aria-label="Detailed reports">
+          {[
+            {
+              href: '/analytics/ledger',
+              label: 'Declined-work ledger',
+              blurb: 'Everything a customer said no to, and what came back.',
+            },
+            {
+              href: '/analytics/retention',
+              label: 'Retention touches & feedback',
+              blurb: 'Who was contacted, who was withheld, and what they said.',
+            },
+            {
+              href: '/analytics/digests',
+              label: 'Owner digests',
+              blurb: 'The message sent to the owner, and the rollup behind it.',
+            },
+          ].map((report, index) => (
+            <Link
+              key={report.href}
+              href={report.href}
+              data-spotlight
+              className="spotlight sheen lift animate-enter group flex flex-col rounded-md border border-border bg-card p-4 shadow-sm transition-colors hover:border-foreground/25 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              style={{ '--i': index } as React.CSSProperties}
+            >
+              <span className="flex items-center justify-between gap-2 text-sm font-semibold">
+                {report.label}
+                <ArrowUpRight
+                  className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-swift group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-primary"
+                  aria-hidden="true"
+                />
+              </span>
+              <span className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                {report.blurb}
+              </span>
+            </Link>
+          ))}
+        </nav>
+      </SpotlightArea>
 
       <p className="text-xs text-muted-foreground">
         Showing {DEFAULT_RANGE_LABEL} unless a range is given. Add <code>?from=</code> and{' '}

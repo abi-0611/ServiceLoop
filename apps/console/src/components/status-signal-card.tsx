@@ -1,10 +1,11 @@
 'use client';
 
 import { StatusSignalDecisionSchema, type PendingStatusSignalDto } from '@serviceloop/shared';
+import { AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { Badge, Button, Card } from '@/components/ui/primitives';
+import { Alert, Badge, Button, Card } from '@/components/ui/primitives';
 
 /**
  * One technician note the parser would not apply on its own (phase 4.2).
@@ -174,9 +175,15 @@ export function StatusSignalCard({
       )}
 
       {error !== null && (
-        <p role="alert" data-testid="status-error" className="mt-3 text-sm text-destructive">
+        <Alert
+          role="alert"
+          data-testid="status-error"
+          tone="danger"
+          icon={<AlertTriangle aria-hidden="true" />}
+          className="mt-3"
+        >
           {error}
-        </p>
+        </Alert>
       )}
     </Card>
   );

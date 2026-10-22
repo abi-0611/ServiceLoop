@@ -30,3 +30,7 @@ apps/console/ServiceLoop/
 # from the HTML templates, and manifest.json records the template hash each
 # image was built from, so committing ~5 MB of PNGs would only add drift.
 packages/simulator/fixtures/ocr/
+
+# Build output for a second dev server (see NEXT_DIST_DIR in next.config.mjs).
+apps/console/.next-preview/
+apps/console/.next-verify/

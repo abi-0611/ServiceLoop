@@ -1,3 +1,4 @@
+import { PageHeader } from '@/components/ui/primitives';
 import { getEnv } from '@serviceloop/config';
 import { SoftphoneStateSchema } from '@serviceloop/shared';
 import { notFound } from 'next/navigation';
@@ -25,14 +26,17 @@ export default async function SoftphonePage(): Promise<React.JSX.Element> {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Softphone</h1>
-        <p className="text-sm text-muted-foreground">
-          Answer as a customer. Audio is real PCM through the real telephony port — the words you
-          type are encoded into it and recognised back out, so nothing here takes a shortcut the
-          telephone would not allow.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Demo"
+        title="Softphone"
+        description={
+          <>
+            Answer as a customer. Audio is real PCM through the real telephony port — the words you
+            type are encoded into it and recognised back out, so nothing here takes a shortcut the
+            telephone would not allow.
+          </>
+        }
+      />
 
       <Softphone initial={state} />
     </div>

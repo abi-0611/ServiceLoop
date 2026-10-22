@@ -45,10 +45,14 @@ export function MessageBubble({ message }: { message: MessageDto }): React.JSX.E
     >
       <div
         className={cn(
-          'max-w-[85%] rounded-2xl px-3 py-2 text-sm shadow-sm sm:max-w-[70%]',
+          'max-w-[85%] rounded-lg px-3.5 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[70%]',
+          'transition-transform duration-200 ease-swift hover:-translate-y-px',
           outbound
-            ? 'rounded-br-sm bg-primary text-primary-foreground'
-            : 'rounded-bl-sm bg-muted text-foreground',
+            ? // Flat ink, not a gradient. The thread is a transcript of what a
+              // shop said to a customer, and a decorated bubble makes an
+              // advisor read the decoration before the sentence.
+              'rounded-br-sm bg-primary text-primary-foreground'
+            : 'rounded-bl-sm bg-muted text-foreground ring-1 ring-inset ring-border/60',
           blocked && 'opacity-70 ring-1 ring-destructive',
         )}
       >
@@ -71,7 +75,7 @@ export function MessageBubble({ message }: { message: MessageDto }): React.JSX.E
             {interactive.buttons.map((button) => (
               <span
                 key={button.id}
-                className="rounded-full border border-current/30 px-2 py-0.5 text-xs opacity-90"
+                className="rounded-full border border-current px-2 py-0.5 text-xs opacity-60"
               >
                 {button.title}
               </span>
@@ -83,18 +87,30 @@ export function MessageBubble({ message }: { message: MessageDto }): React.JSX.E
           <p className="mt-1 text-xs opacity-80">tapped “{interactive.title ?? ''}”</p>
         )}
 
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] opacity-80">
-          <time dateTime={message.createdAt}>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] opacity-80">
+          <time dateTime={message.createdAt} className="font-mono">
             {new Date(message.sentAt ?? message.createdAt).toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',
             })}
           </time>
 
-          {message.templateName !== null && <span>template: {message.templateName}</span>}
-          {outbound && !blocked && <span>{TICKS[message.status] ?? ''}</span>}
-          {message.isHumanReply && <span>advisor</span>}
-          {message.createdByAgent && <span>agent</span>}
+          {message.templateName !== null && (
+            <span className="font-mono">template: {message.templateName}</span>
+          )}
+          {outbound && !blocked && (
+            // READ is the only tick worth a colour — it is the one that answers
+            // "did the customer actually see the estimate?".
+            <span className={cn(message.status === 'READ' && 'opacity-100')}>
+              {TICKS[message.status] ?? ''}
+            </span>
+          )}
+          {message.isHumanReply && (
+            <span className="rounded-full bg-black/10 px-1.5 py-px dark:bg-white/10">advisor</span>
+          )}
+          {message.createdByAgent && (
+            <span className="rounded-full bg-black/10 px-1.5 py-px dark:bg-white/10">agent</span>
+          )}
         </div>
 
         {blocked && (
@@ -104,7 +120,7 @@ export function MessageBubble({ message }: { message: MessageDto }): React.JSX.E
         )}
 
         {held && (
-          <p className="mt-2 rounded-md bg-amber-100 px-2 py-1 text-xs text-amber-900">
+          <p className="mt-2 rounded-md bg-amber-100 px-2 py-1 text-xs text-amber-900 dark:bg-amber-500/20 dark:text-amber-100">
             Held for quiet hours until{' '}
             {new Date(message.scheduledFor as string).toLocaleString()}
           </p>
@@ -149,7 +165,12 @@ function MediaPreview({
       target="_blank"
       rel="noreferrer"
     >
-      <Badge tone="neutral">{media.kind}</Badge>
+      {/* Outline, not filled: this chip sits inside a message bubble whose
+          ground is the primary ink on outbound, and a filled neutral badge
+          there reads as a hole punched in the bubble. */}
+      <Badge tone="outline" className="border-current text-current">
+        {media.kind}
+      </Badge>
       {media.contentType}
     </a>
   );

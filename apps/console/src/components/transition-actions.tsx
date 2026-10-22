@@ -3,6 +3,7 @@
 import type { JobCardEvent } from '@serviceloop/shared';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { OrbitalLoader } from '@/components/ui/orbital-loader';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@/components/ui/primitives';
 
 /**
@@ -81,11 +82,28 @@ export function TransitionActions({
               <Button
                 key={event}
                 size="sm"
-                variant={event === 'CANCEL' ? 'destructive' : 'default'}
+                // Cancelling is destructive but it is not the *point* of this
+                // panel, and a solid red button beside the action an advisor
+                // actually came for competes with it for the same glance. It
+                // gets the destructive colour on an outline, so it still reads
+                // as dangerous while the forward move stays the loud one.
+                variant={event === 'CANCEL' ? 'outline' : 'default'}
+                className={
+                  event === 'CANCEL'
+                    ? 'border-destructive/40 text-destructive hover:border-destructive hover:bg-destructive/10 hover:text-destructive'
+                    : undefined
+                }
                 disabled={busy !== null}
                 onClick={() => void run(event)}
               >
-                {busy === event ? 'Working…' : LABELS[event]}
+                {busy === event ? (
+                  <>
+                    <OrbitalLoader />
+                    Working…
+                  </>
+                ) : (
+                  LABELS[event]
+                )}
               </Button>
             ))}
           </div>

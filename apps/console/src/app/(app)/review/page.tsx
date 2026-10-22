@@ -5,8 +5,11 @@ import {
   type AdvisorTaskDto,
   type GraduationReportDto,
 } from '@serviceloop/shared';
+import { ArrowRight, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
-import { Badge, Card, EmptyState } from '@/components/ui/primitives';
+import { Badge, Card, EmptyState, PageHeader, SectionHeading } from '@/components/ui/primitives';
+import { SpotlightArea } from '@/components/ui/spotlight';
+import { spotlightProps } from '@/lib/spotlight';
 import { ReviewCandidateCard } from '@/components/review-candidate';
 import { ApiError, serverApiFetch } from '@/lib/api';
 
@@ -41,30 +44,41 @@ export default async function ReviewPage(): Promise<React.JSX.Element> {
   const graduation = await loadGraduation();
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Review queue</h1>
-          <p className="text-sm text-muted-foreground">
-            Messages the agent drafted. Nothing here has reached the customer.
-          </p>
-        </div>
-        {queue.candidates.length > 0 && (
-          <Badge tone="warn" data-testid="review-pending-count">
-            {queue.candidates.length} waiting
-          </Badge>
-        )}
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        eyebrow="Workshop"
+        title="Review queue"
+        description="Messages the agent drafted. Nothing here has reached the customer."
+        actions={
+          queue.candidates.length > 0 ? (
+            <span
+              data-testid="review-pending-count"
+              className="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 shadow-xs dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-300"
+            >
+              <span className="relative flex size-2">
+                <span className="ping-dot absolute inset-0 rounded-full opacity-70" />
+                <span className="relative size-2 rounded-full bg-current" />
+              </span>
+              {queue.candidates.length} waiting
+            </span>
+          ) : undefined
+        }
+      />
 
       {queue.candidates.length === 0 ? (
         <EmptyState
+          icon={<ShieldCheck />}
           title="Nothing waiting"
           description="When the agent drafts a message at shadow autonomy it lands here, with the checker's reasons attached, and goes nowhere until you approve it."
         />
       ) : (
         <ul data-testid="review-queue" className="space-y-4">
-          {queue.candidates.map((candidate) => (
-            <li key={candidate.messageId}>
+          {queue.candidates.map((candidate, index) => (
+            <li
+              key={candidate.messageId}
+              className="animate-enter"
+              style={{ '--i': index } as React.CSSProperties}
+            >
               <ReviewCandidateCard candidate={candidate} />
             </li>
           ))}
@@ -100,32 +114,62 @@ function GraduationPanel({ report }: { report: GraduationReportDto }): React.JSX
   const ready = report.recommendedLevel !== null;
 
   return (
-    <Card className="p-4" data-testid="graduation-report">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-base font-semibold">Approval flow autonomy</h2>
+    <Card
+      className="animate-enter relative overflow-hidden p-5"
+      data-testid="graduation-report"
+    >
+      {/* A shop that has earned a promotion should be able to tell from across
+          the room; one that has not should see nothing shouting at it. */}
+      {ready && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-emerald-500/10 blur-3xl"
+        />
+      )}
+
+      <div className="relative flex flex-wrap items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2.5 text-base font-semibold">
+          <span
+            aria-hidden="true"
+            className="flex size-8 items-center justify-center rounded-lg bg-primary-soft text-primary ring-1 ring-inset ring-primary/15"
+          >
+            <ShieldCheck className="size-4" />
+          </span>
+          Approval flow autonomy
+        </h2>
         <Badge tone={ready ? 'success' : 'neutral'} data-testid="graduation-verdict">
           {ready ? `Ready for ${report.recommendedLevel}` : `Staying at ${report.currentLevel}`}
         </Badge>
       </div>
 
-      <dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <dl className="relative mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-border bg-border sm:grid-cols-4">
         <Stat label="Sent without edit" value={percent(report.approvedWithoutEditRate)} />
         <Stat label="Edited before sending" value={String(report.approvedWithEdit)} />
         <Stat label="Rejected" value={String(report.rejected)} />
         <Stat label="Checker blocked" value={percent(report.checkerBlockRate)} />
       </dl>
 
-      <p className="mt-4 text-sm text-muted-foreground" data-testid="graduation-rationale">
+      <p
+        className="relative mt-4 text-sm leading-relaxed text-muted-foreground"
+        data-testid="graduation-rationale"
+      >
         {report.rationale}
       </p>
 
       {ready && (
-        <p className="mt-3 text-sm">
+        <p className="relative mt-4 text-sm">
           {/* The system recommends; the owner decides (master §6). The link goes
               to the setting rather than a one-click promotion, because raising
               autonomy is a deliberate act with a customer on the other end. */}
-          <Link href="/settings/guardrails" className="font-medium underline underline-offset-4">
-            Change it in Guardrails →
+          <Link
+            href="/settings/guardrails"
+            className="group inline-flex items-center gap-1.5 font-medium text-primary underline-offset-4 hover:underline"
+          >
+            Change it in Guardrails
+            <ArrowRight
+              className="size-4 transition-transform duration-200 ease-swift group-hover:translate-x-0.5"
+              aria-hidden="true"
+            />
           </Link>
         </p>
       )}
@@ -135,9 +179,9 @@ function GraduationPanel({ report }: { report: GraduationReportDto }): React.JSX
 
 function Stat({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-lg font-semibold tabular-nums">{value}</dd>
+    <div className="bg-card p-3">
+      <dt className="text-[11px] uppercase tracking-[0.08em] text-muted-foreground">{label}</dt>
+      <dd className="mt-1 text-lg font-semibold tabular-nums">{value}</dd>
     </div>
   );
 }
@@ -150,39 +194,52 @@ function Stat({ label, value }: { label: string; value: string }): React.JSX.Ele
  */
 function AdvisorTasks({ tasks }: { tasks: readonly AdvisorTaskDto[] }): React.JSX.Element {
   return (
-    <section className="space-y-2" data-testid="advisor-tasks">
-      <h2 className="text-base font-semibold">Waiting for you</h2>
+    <section className="space-y-3" data-testid="advisor-tasks">
+      <SectionHeading>Waiting for you</SectionHeading>
 
       {tasks.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <p className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
           No calls or handoffs are outstanding.
         </p>
       ) : (
-        <ul className="space-y-2">
-          {tasks.map((task) => (
-            <li key={task.id}>
-              <Card className="flex flex-wrap items-start justify-between gap-2 p-4">
-                <div className="min-w-0">
-                  <p className="text-sm">{task.brief}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {task.kind.replace(/_/g, ' ').toLowerCase()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge tone={URGENCY_TONE[task.urgency]}>{task.urgency}</Badge>
-                  {task.conversationId !== null && (
-                    <Link
-                      href={`/conversations/${task.conversationId}`}
-                      className="text-sm font-medium underline underline-offset-4"
-                    >
-                      Open thread
-                    </Link>
-                  )}
-                </div>
-              </Card>
-            </li>
-          ))}
-        </ul>
+        <SpotlightArea>
+          <ul className="space-y-2.5">
+            {tasks.map((task, index) => (
+              <li
+                key={task.id}
+                className="animate-enter-fast"
+                style={{ '--i': index } as React.CSSProperties}
+              >
+                <Card
+                  {...spotlightProps}
+                  className="spotlight flex flex-wrap items-start justify-between gap-x-3 gap-y-2 overflow-hidden p-4"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm leading-relaxed">{task.brief}</p>
+                    <p className="mt-1 text-xs capitalize text-muted-foreground">
+                      {task.kind.replace(/_/g, ' ').toLowerCase()}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={URGENCY_TONE[task.urgency]}>{task.urgency}</Badge>
+                    {task.conversationId !== null && (
+                      <Link
+                        href={`/conversations/${task.conversationId}`}
+                        className="group inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
+                      >
+                        Open thread
+                        <ArrowRight
+                          className="size-3.5 transition-transform duration-200 ease-swift group-hover:translate-x-0.5"
+                          aria-hidden="true"
+                        />
+                      </Link>
+                    )}
+                  </div>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </SpotlightArea>
       )}
     </section>
   );

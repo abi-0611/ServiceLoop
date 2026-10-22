@@ -10,6 +10,7 @@ import {
   CardHeader,
   CardTitle,
   EmptyState,
+  PageHeader,
 } from '@/components/ui/primitives';
 import { serverApiFetch } from '@/lib/api';
 
@@ -86,13 +87,16 @@ export default async function PrivacyRequestsPage(): Promise<React.JSX.Element> 
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Data-principal requests</h1>
-        <p className="text-sm text-muted-foreground">
-          Export and erasure under the DPDP Act. Every step is audited; a deletion is a workflow
-          with an approval and a completion report, not a button.
-        </p>
-      </div>
+      <PageHeader
+        eyebrow="Settings"
+        title="Data-principal requests"
+        description={
+          <>
+            Export and erasure under the DPDP Act. Every step is audited; a deletion is a workflow
+            with an approval and a completion report, not a button.
+          </>
+        }
+      />
 
       <Card>
         <CardHeader>
@@ -171,7 +175,9 @@ function RequestCard({
         </CardHeader>
 
         <CardContent className="space-y-3 text-sm">
-          {request.detail !== null && <p className="italic text-muted-foreground">“{request.detail}”</p>}
+          {request.detail !== null && (
+            <p className="italic text-muted-foreground">“{request.detail}”</p>
+          )}
 
           <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-xs">
             <Row label="Lodged" value={formatWhen(request.createdAt)} />
@@ -203,9 +209,7 @@ function RequestCard({
                 }
               />
             )}
-            {request.outcomeReason !== null && (
-              <Row label="Reason" value={request.outcomeReason} />
-            )}
+            {request.outcomeReason !== null && <Row label="Reason" value={request.outcomeReason} />}
           </dl>
 
           <DataRequestActions

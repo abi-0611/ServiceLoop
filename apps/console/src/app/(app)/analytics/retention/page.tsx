@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react';
 import {
   AlertListSchema,
   FeedbackListSchema,
@@ -39,10 +40,17 @@ export default async function RetentionPage(): Promise<React.JSX.Element> {
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/analytics" className="text-sm text-muted-foreground hover:underline">
-          ← Back to analytics
+        <Link
+          href="/analytics"
+          className="group inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft
+            className="size-4 transition-transform duration-200 ease-swift group-hover:-translate-x-0.5"
+            aria-hidden="true"
+          />
+          Back to analytics
         </Link>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight">Retention & feedback</h1>
+        <h1 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">Retention & feedback</h1>
         <p className="text-sm text-muted-foreground">
           What went out, what the gate held back, and what customers said afterwards.
         </p>

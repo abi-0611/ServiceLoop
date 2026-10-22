@@ -1,7 +1,9 @@
 'use client';
 
 import { GatePassVerdictSchema, type GatePassVerdict } from '@serviceloop/shared';
+import { Ban, Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { OrbitalLoader } from '@/components/ui/orbital-loader';
 import { Button } from '@/components/ui/primitives';
 
 /**
@@ -84,7 +86,7 @@ export function GateVerify({ initialToken }: { initialToken: string | null }): R
             autoCapitalize="characters"
             spellCheck={false}
             data-testid="gate-code"
-            className="mt-1 flex h-14 w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-2xl tracking-[0.3em] ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="mt-1.5 flex h-14 w-full rounded-lg border border-input bg-background px-4 py-2 font-mono text-2xl tracking-[0.3em] shadow-xs transition-[border-color,box-shadow] duration-200 ease-swift placeholder:text-muted-foreground/40 hover:border-muted-foreground/40 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25"
           />
         </div>
         <Button
@@ -93,7 +95,14 @@ export function GateVerify({ initialToken }: { initialToken: string | null }): R
           disabled={busy || code.trim().length === 0}
           data-testid="gate-verify"
         >
-          {busy ? 'Checking…' : 'Check'}
+          {busy ? (
+            <>
+              <OrbitalLoader />
+              Checking…
+            </>
+          ) : (
+            'Check'
+          )}
         </Button>
       </form>
 
@@ -117,35 +126,68 @@ function Verdict({ verdict }: { verdict: GatePassVerdict }): React.JSX.Element {
       data-testid="gate-verdict"
       data-allow={allow ? 'true' : 'false'}
       data-result={verdict.result}
-      className={`rounded-lg border-2 p-6 ${
+      className={`animate-scale-in relative overflow-hidden rounded-md border-2 p-6 shadow-lg ${
         allow
-          ? 'border-emerald-500 bg-emerald-50 text-emerald-900'
-          : 'border-rose-500 bg-rose-50 text-rose-900'
+          ? 'border-emerald-500 bg-emerald-50 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-200'
+          : 'border-rose-500 bg-rose-50 text-rose-900 dark:bg-rose-500/10 dark:text-rose-200'
       }`}
     >
-      {/* One word, large enough to read from arm's length. */}
-      <p className="text-3xl font-bold tracking-tight" data-testid="gate-headline">
-        {allow ? 'LET IT OUT' : 'STOP'}
-      </p>
-      <p className="mt-1 text-sm">{verdict.detail}</p>
+      {/* A wash of the verdict's own colour, so the answer registers as a block
+          of red or green before a single word has been read. */}
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute -right-20 -top-20 size-56 rounded-full blur-3xl ${
+          allow ? 'bg-emerald-500/25' : 'bg-rose-500/25'
+        }`}
+      />
+
+      <div className="relative flex items-center gap-3">
+        <span
+          aria-hidden="true"
+          className={`flex size-12 shrink-0 items-center justify-center rounded-full ${
+            allow ? 'bg-emerald-500/20' : 'bg-rose-500/20'
+          }`}
+        >
+          {allow ? <Check className="size-7" strokeWidth={3} /> : <Ban className="size-7" strokeWidth={2.5} />}
+        </span>
+        {/* One word, large enough to read from arm's length. */}
+        <p
+          className="text-3xl font-bold tracking-tight sm:text-4xl"
+          data-testid="gate-headline"
+        >
+          {allow ? 'LET IT OUT' : 'STOP'}
+        </p>
+      </div>
+
+      <p className="relative mt-2 text-sm leading-relaxed">{verdict.detail}</p>
 
       {verdict.summary !== null && (
-        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-          <Field label="Vehicle" value={verdict.summary.registration} />
+        <dl className="relative mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+          <Field label="Vehicle" value={verdict.summary.registration} mono />
           <Field label="Model" value={verdict.summary.vehicle} />
           <Field label="Customer" value={verdict.summary.customerName} />
-          <Field label="Balance" value={verdict.summary.balance} />
+          <Field label="Balance" value={verdict.summary.balance} mono />
         </dl>
       )}
     </div>
   );
 }
 
-function Field({ label, value }: { label: string; value: string }): React.JSX.Element {
+function Field({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}): React.JSX.Element {
   return (
-    <div>
-      <dt className="text-xs opacity-70">{label}</dt>
-      <dd className="font-semibold">{value}</dd>
+    <div className="min-w-0">
+      <dt className="text-[11px] uppercase tracking-[0.08em] opacity-70">{label}</dt>
+      <dd className={`mt-0.5 truncate font-semibold ${mono ? 'font-mono tracking-wide' : ''}`}>
+        {value}
+      </dd>
     </div>
   );
 }
